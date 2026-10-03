@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Figure to 3D</title>
+  <meta name="description" content="Turn a simple 2D figure illustration into a 3D model and download it as STL, GLB, FBX or BLEND.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 3 28 10v12L16 29 4 22V10z' fill='%23d9542b'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="style.css">
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "./vendor/three/build/three.module.min.js",
+        "three/addons/": "./vendor/three/examples/jsm/"
+      }
+    }
+  </script>
+  <script type="module" src="js/main.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <h1>Figure to 3D</h1>
+    <p>Turn a simple 2D figure into a 3D model. Everything except .blend runs in your browser.</p>
+  </header>
+
+  <main class="layout">
+    <aside class="panel">
+      <section>
+        <h2>1. Image</h2>
+        <label class="dropzone" id="dropzone">
+          <input type="file" id="file" accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml">
+          <span class="dz-title">Drop an image or click to choose</span>
+          <span class="dz-hint">PNG with transparent background works best. Plain-background JPGs work too.</span>
+        </label>
+        <button type="button" class="link" id="demo">Use a demo figure</button>
+        <div class="preview-row" id="preview-row" hidden>
+          <canvas id="mask-preview" aria-label="Detected figure outline"></canvas>
+          <p id="mask-info" class="muted"></p>
+        </div>
+      </section>
+
+      <section>
+        <h2>2. Shape</h2>
+        <div class="segmented" role="radiogroup" aria-label="Shape mode">
+          <label><input type="radio" name="mode" value="puffy" checked><span>Puffy</span></label>
+          <label><input type="radio" name="mode" value="flat"><span>Flat cutout</span></label>
+        </div>
+        <div class="field" data-mode="puffy">
+          <label for="puffiness">Puffiness <output for="puffiness"></output></label>
+          <input type="range" id="puffiness" min="0.1" max="1.5" step="0.05" value="0.6">
+        </div>
+        <div class="field" data-mode="puffy">
+          <label for="smoothing">Smoothness <output for="smoothing"></output></label>
+          <input type="range" id="smoothing" min="0" max="20" step="1" value="6">
+        </div>
+        <div class="field" data-mode="puffy">
+          <label for="edge">Edge thickness <output for="edge" data-unit="mm"></output></label>
+          <input type="range" id="edge" min="0.2" max="10" step="0.1" value="1">
+        </div>
+        <div class="field" data-mode="flat">
+          <label for="thickness">Thickness <output for="thickness" data-unit="mm"></output></label>
+          <input type="range" id="thickness" min="0.5" max="30" step="0.5" value="5">
+        </div>
+        <label class="check"><input type="checkbox" id="flatback"> Flat back (best for 3D printing)</label>
+        <label class="check"><input type="checkbox" id="smooth-outline" checked> Smooth outline</label>
+      </section>
+
+      <section>
+        <h2>3. Size &amp; detail</h2>
+        <div class="field">
+          <label for="size">Height / width of figure <output for="size" data-unit="mm"></output></label>
+          <input type="range" id="size" min="10" max="300" step="5" value="100">
+        </div>
+        <div class="field">
+          <label for="detail">Detail <output for="detail" data-unit="px"></output></label>
+          <input type="range" id="detail" min="64" max="512" step="16" value="224">
+        </div>
+        <div class="field" id="tolerance-field">
+          <label for="tolerance">Background tolerance <output for="tolerance"></output></label>
+          <input type="range" id="tolerance" min="2" max="120" step="1" value="40">
+        </div>
+      </section>
+
+      <section>
+        <h2>4. Download</h2>
+        <label class="check"><input type="checkbox" id="color" checked> Include colours (GLB, FBX, BLEND)</label>
+        <div class="exports">
+          <button type="button" data-format="stl" disabled>STL</button>
+          <button type="button" data-format="glb" disabled>GLB</button>
+          <button type="button" data-format="fbx" disabled>FBX</button>
+          <button type="button" data-format="blend" disabled>BLEND</button>
+        </div>
+        <p id="status" class="muted" role="status"></p>
+      </section>
+    </aside>
+
+    <section class="viewer">
+      <div id="viewport"></div>
+      <div class="empty" id="empty">
+        <p>Upload an illustration or try the demo figure to see it in 3D.</p>
+      </div>
+      <div class="viewer-bar">
+        <span id="stats" class="muted"></span>
+        <span class="spacer"></span>
+        <label class="check"><input type="checkbox" id="wireframe"> Wireframe</label>
+        <button type="button" id="reset-view">Reset view</button>
+      </div>
+    </section>
+  </main>
+</body>
+</html>
