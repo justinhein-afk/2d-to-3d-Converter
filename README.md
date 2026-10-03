@@ -3,6 +3,10 @@
 A web page that turns simple 2D figure illustrations into 3D models and downloads
 them as **STL**, **GLB**, **FBX** or **BLEND**.
 
+**Live site:** https://justinhein-afk.github.io/2d-to-3d-Converter/ (STL, GLB and FBX;
+BLEND needs the Python server below). It is redeployed automatically from `web/` on every push
+to `main` by `.github/workflows/pages.yml`.
+
 Upload a PNG (transparent background works best) or a JPG on a plain background.
 The page finds the figure's outline and "puffs" it into a rounded 3D shape that
 keeps the drawing's colours, or makes a flat cutout of a chosen thickness.
