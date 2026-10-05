@@ -1,0 +1,14 @@
+{
+  "name": "henry-intro",
+  "version": "1.0.0",
+  "private": true,
+  "description": "20s vertical motion-graphics intro for Henry, rendered from code",
+  "type": "module",
+  "scripts": {
+    "render": "node render.mjs",
+    "stills": "node stills.mjs"
+  },
+  "dependencies": {
+    "@napi-rs/canvas": "^1.0.10"
+  }
+}
