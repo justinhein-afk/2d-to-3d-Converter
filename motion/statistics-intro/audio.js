@@ -1,12 +1,15 @@
 // Upbeat 120 BPM track + SFX, generated from code and synced to the cuts.
-//   node audio.js events.json audio.wav
+//   node audio.js events.json audio.wav [pre]
+// [pre] seconds of a calm version of the same theme are prepended (for the
+// talking-head clip that plays before the motion graphic).
 const fs = require('fs');
 const ev = JSON.parse(fs.readFileSync(process.argv[2] || 'events.json', 'utf8'));
 const outFile = process.argv[3] || 'audio.wav';
 
 // graphics timeline starts after the photo intro; times below are timeline seconds
 const OFF = ev.INTRO || 0, TL_END = ev.TL_END || 10;
-const SR = 48000, DUR = OFF + TL_END, LEN = Math.round(SR * DUR), TAU = Math.PI * 2;
+const PRE = Number(process.argv[4] || 0), SHIFT = PRE + OFF;
+const SR = 48000, DUR = SHIFT + TL_END, LEN = Math.round(SR * DUR), TAU = Math.PI * 2;
 const BEAT = 0.5, S16 = BEAT / 4;
 const bus = () => [new Float32Array(LEN), new Float32Array(LEN)];
 const DRUMS = bus(), MUSIC = bus(), FX = bus(), SEND = bus();
@@ -19,7 +22,7 @@ const env = (t, a, d) => (t < a ? t / a : Math.exp(-(t - a) / d));
 const mtof = (m) => 440 * Math.pow(2, (m - 69) / 12);
 
 function place(target, t0, dur, gen, { gain = 1, pan = 0, rev = 0, panFn = null } = {}) {
-  const i0 = Math.round((t0 + OFF) * SR), n = Math.round(dur * SR);
+  const i0 = Math.round((t0 + SHIFT) * SR), n = Math.round(dur * SR);
   for (let k = 0; k < n; k++) {
     const i = i0 + k; if (i >= LEN) break;
     const tl = k / SR, s = gen(tl) * gain;
@@ -151,6 +154,8 @@ for (let b = 0; b < 5; b++) {
     if (b >= 2) { hat(tb + S16, 0.06, false, -0.3); hat(tb + 3 * S16, 0.06, false, -0.3); }
     if (b >= 1) bassNote(tb + BEAT / 2, ROOTS[b], BEAT * 0.45, 0.3);
     if (b === 0) bassNote(tb + BEAT / 2, ROOTS[b], BEAT * 0.3, 0.12);
+    if (b >= 1 && b < 2) { hat(tb + S16, 0.045, false, -0.3); hat(tb + 3 * S16, 0.045, false, -0.3); }
+    if (b >= 3) bassNote(tb + 3 * S16, ROOTS[b] + 12, S16 * 0.8, 0.14);
     if (b >= 2) stab(tb + BEAT / 2 + (q === 3 ? S16 : 0), ch, 0.09, 0.16);
   }
   if (b >= 3) for (let s = 0; s < 16; s++) pluck(t0 + s * S16, ch[s % 3] + 24 + (s % 4 === 3 ? 12 : 0), 0.05, s % 2 ? 0.4 : -0.4);
@@ -164,12 +169,31 @@ crash(2.0, 0.22); crash(6.0, 0.22); crash(7.5, 0.28); crash(9.0, 0.32);
 impact(0.0, 0.6); impact(2.0, 0.8); impact(6.0, 0.8); impact(7.5, 1.0); impact(9.0, 1.2);
 stab(9.0, [57, 60, 64, 69], 0.2, 0.9);
 
-// photo intro (negative timeline time): room tone, a soft pad, focus click, then the dive
+// calm version of the same theme — Am F C G at 120 BPM, no drums — under the
+// talking clip and the photo intro, building into the drop at timeline 0
 {
-  const lp = biquad('lp');
-  place(FX, -OFF, OFF + 0.2, (tl) => lp(noise(), 700, 0.6) * clamp(tl / 0.4) * clamp((OFF + 0.2 - tl) / 0.3), { gain: 0.12 });
+  const CALM = [[57, 60, 64], [53, 57, 60], [48, 52, 55], [55, 59, 62], [53, 57, 60], [55, 59, 62], [57, 60, 64], [53, 57, 60], [48, 52, 55]];
+  const CROOT = [45, 41, 48, 43, 41, 43, 45, 41, 48];
+  const start = -SHIFT, nb = Math.ceil(SHIFT / 2);
+  const CG = 2.6; // calm bed level, sits under a voice
+  const ARP = [0, 1, 2, 1, 0, 2, 1, 2];
+  for (let k = 0; k < nb; k++) {
+    const b0 = -2 * (nb - k), ch = CALM[(CALM.length - nb + k + 90) % CALM.length], root = CROOT[(CALM.length - nb + k + 90) % CALM.length];
+    const last = k >= nb - 2, lift = last ? 1.35 : 1;
+    pad(Math.max(b0, start), b0 + 2, ch, 0.05 * CG);
+    for (const q of [0, 2]) {
+      const tb = b0 + q * BEAT; if (tb < start) continue;
+      let ph = 0; const f = mtof(root - 12);
+      place(MUSIC, tb, 1.0, (tl) => { ph += (TAU * f) / SR; return Math.sin(ph) * env(tl, 0.01, 0.4); }, { gain: 0.2 * CG });
+    }
+    for (let e = 0; e < 8; e++) {
+      const te = b0 + e * 0.25; if (te < start) continue;
+      pluck(te, ch[ARP[e]] + 12 + (e === 6 ? 12 : 0), 0.03 * CG * lift, e % 2 ? 0.35 : -0.35, 0.45, 0.2);
+    }
+    if (k >= 1) for (let e = 0; e < 4; e++) hat(b0 + e * BEAT + BEAT / 2, 0.03 * CG * lift, false, 0.3);
+    if (last) for (let e = 0; e < 8; e++) hat(b0 + e * S16 * 2 + S16, 0.022 * CG, false, -0.3);
+  }
 }
-pad(-OFF, 0.05, [57, 60, 64], 0.05);
 tick(-OFF + 0.3, 2400, 0.08, -0.2, 0.012);
 tick(-OFF + 0.36, 3200, 0.06, 0.2, 0.01);
 riser(0, OFF - 0.6, 0.38, 500, 9000);
@@ -236,7 +260,7 @@ const hpL = biquad('hp'), hpR = biquad('hp');
 const M = [new Float32Array(LEN), new Float32Array(LEN)];
 let peak = 0, ki = 0;
 for (let n = 0; n < LEN; n++) {
-  const t = n / SR - OFF;
+  const t = n / SR - SHIFT;
   while (ki + 1 < KICKS.length && KICKS[ki + 1] <= t) ki++;
   const since = t - KICKS[ki];
   const duck = since >= 0 ? 1 - 0.65 * Math.exp(-since / 0.09) : 1; // sidechain pump
@@ -251,7 +275,7 @@ pcm.write('fmt ', 12); pcm.writeUInt32LE(16, 16); pcm.writeUInt16LE(1, 20); pcm.
 pcm.writeUInt32LE(SR, 24); pcm.writeUInt32LE(SR * 4, 28); pcm.writeUInt16LE(4, 32); pcm.writeUInt16LE(16, 34);
 pcm.write('data', 36); pcm.writeUInt32LE(LEN * 4, 40);
 for (let n = 0; n < LEN; n++) {
-  const fade = Math.min(1, (LEN - n) / (SR * 0.6));
+  const fade = Math.min(1, (LEN - n) / (SR * 0.6), PRE > 0 ? (n + 1) / (SR * 0.25) : 1);
   for (let k = 0; k < 2; k++) {
     const v = Math.tanh(M[k][n] * drive) * 0.88 * fade + (rnd() - rnd()) / 32768;
     pcm.writeInt16LE(Math.max(-32768, Math.min(32767, Math.round(v * 32767))), 44 + n * 4 + k * 2);
