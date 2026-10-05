@@ -1,5 +1,5 @@
 // Soundtrack synthesizer: 120 BPM electronic track in F minor plus sound design
-// (slams, whooshes, bass hits), placed on the same timeline as scene.js.
+// (slams, whooshes, risers into every zoom, bass hits), placed on the same timeline as scene.js.
 // Everything is generated from oscillators and seeded noise, so no samples are needed.
 
 import fs from 'node:fs';
@@ -342,7 +342,7 @@ export function synthesize() {
   const kickTimes = [];
   const K = (t, opts, g = 1, verb = 0.05) => { place(drums, kick(opts), t, g, 0, verb); kickTimes.push(t); };
 
-  // ---- Scene 1: hook. Each word lands on a hit; "THEM." gets the bass drop.
+  // ---- Hook (0-3s). Each word lands on a hit; "THEM." gets the bass drop.
   [[0.25, 0.8], [0.5, 0.8], [1.0, 0.85]].forEach(([t, g]) => {
     K(t, { f0: 210, f1: 58, decay: 0.16, click: 0.6 }, g, 0.12);
     place(fx, tick(3400, 0.01), t, 0.25, 0, 0.1);
@@ -355,84 +355,108 @@ export function synthesize() {
   place(drums, boom(), 2.0, 1.0, 0, 0.08); // bass hit
   K(2.0, { f0: 200, f1: 50, decay: 0.22, click: 0.9 }, 0.9, 0.1);
   place(fx, crash(2.2, 0.55), 2.0, 0.42, 0, 0.35);
-  place(fx, reverse(crash(0.7, 0.3)), 2.3, 0.5, 0, 0.3);
-  place(fx, riser(0.8), 2.2, 0.25, 0, 0.2);
-  place(fx, whoosh(0.42, 250, 7000, { peak: 0.6, pan0: 0.2, pan1: -0.2 }), 2.8, 0.85, 0, 0.15); // shape wipe
+  // blue transition: dive into the full stop
+  place(fx, reverse(crash(0.62, 0.3)), 2.38, 0.5, 0, 0.3);
+  place(fx, riser(0.62), 2.38, 0.35, 0, 0.2);
+  place(fx, whoosh(0.34, 300, 9000, { peak: 0.97, q: 1.1, pan0: 0, pan1: 0, tail: 0.05 }), 2.62, 0.9, 0, 0.1);
 
-  // ---- Groove: 3s to 12s, four on the floor
-  for (let t = 3.0; t <= 12.0 + 1e-9; t += 0.5) K(t, { f0: 160, f1: 47, decay: 0.3 }, t === 3.0 ? 1.05 : 0.95);
+  // ---- Grooves: four on the floor, 16th hats; the drums drop out for the build at 10-11s
+  const kicks = (a, b) => { for (let t = a; t <= b + 1e-9; t += 0.5) K(t, { f0: 160, f1: 47, decay: 0.3 }, 0.95); };
+  K(3.0, { f0: 180, f1: 46, decay: 0.34, drive: 2.2, click: 0.8 }, 1.05, 0.1); // out of the dot
   place(fx, crash(2.4, 0.8), 3.0, 0.35, 0, 0.3);
-  for (let t = 3.5; t <= 11.5 + 1e-9; t += 1.0) place(drums, clap(), t, 0.42, 0, 0.22);
-  for (let t = 3.25; t <= 12.25 + 1e-9; t += 0.5) place(drums, hat(0.045), t, 0.26, 0.25, 0.04);
-  for (let t = 6.125; t < 12.0; t += 0.25) place(drums, hat(0.02), t, 0.08, -0.3, 0);
+  kicks(3.5, 10.0);
+  kicks(13.5, 15.5);
+  for (let t = 3.5; t <= 9.5 + 1e-9; t += 1.0) place(drums, clap(), t, 0.42, 0, 0.22);
+  for (const t of [13.5, 14.5, 15.5]) place(drums, clap(), t, 0.45, 0, 0.22);
+  for (const [a, b] of [[3.25, 10.25], [13.25, 15.75]]) {
+    for (let t = a; t <= b + 1e-9; t += 0.5) place(drums, hat(0.045), t, 0.26, 0.25, 0.04);
+    for (let t = a - 0.125; t < b; t += 0.25) place(drums, hat(0.02), t, 0.09, -0.3, 0);
+  }
 
-  // Harmony: one chord per 2s bar from 3s, F minor
+  // Harmony: one chord per 2s bar, F minor
   const BARS = [
     { t: 3, d: 2, root: 41, notes: [53, 56, 60, 63, 67] }, // Fm9
     { t: 5, d: 2, root: 37, notes: [49, 53, 56, 60] }, // Dbmaj7
     { t: 7, d: 2, root: 44, notes: [56, 60, 63, 67] }, // Abmaj7
-    { t: 9, d: 2, root: 39, notes: [51, 55, 58, 61] }, // Eb7
-    { t: 11, d: 2, root: 41, notes: [53, 56, 60, 63] }, // Fm7
+    { t: 9, d: 2, root: 39, notes: [51, 55, 58, 61], build: true }, // Eb7, filter opens into the drop
+    { t: 13, d: 2, root: 37, notes: [49, 53, 56, 60] }, // Dbmaj7 (recap)
+    { t: 15, d: 1, root: 39, notes: [51, 55, 58, 63] }, // Eb
   ];
-  BARS.forEach((b, i) => {
-    const last = i === BARS.length - 1;
-    place(music, chord(b.notes, b.d, { cut: last ? 900 : 1300, cutEnd: last ? 5200 : 1700, release: 0.1 }), b.t, 0.5, 0, 0.25);
-    for (let t = b.t + 0.25; t < b.t + b.d && t < 12.5; t += 0.5) {
-      place(music, bassNote(b.root, 0.2), t, 0.5, 0, 0);
-    }
+  BARS.forEach((b) => {
+    place(music, chord(b.notes, b.d, { cut: b.build ? 900 : 1300, cutEnd: b.build ? 5200 : 1700, release: 0.1 }), b.t, 0.5, 0, 0.25);
+    for (let t = b.t + 0.25; t < b.t + b.d && !(b.build && t > 10.5); t += 0.5) place(music, bassNote(b.root, 0.2), t, 0.5, 0, 0);
   });
 
-  // Scene 2: name letters and the underline zip
-  for (let k = 0; k < 5; k++) place(fx, tick(2800 + k * 220, 0.008), 3.32 + k * 0.055 + 0.12, 0.12, -0.4 + k * 0.2, 0.2);
-  place(fx, whoosh(0.46, 900, 3800, { peak: 0.8, q: 3, pan0: -0.5, pan1: 0.5 }), 3.84, 0.22, 0, 0.2);
-  place(fx, whoosh(0.4, 3000, 400, { peak: 0.35, pan0: 0.3, pan1: -0.3 }), 5.78, 0.4, 0, 0.15); // exit to grid
+  // ---- Intro (3-5.4s): name letters, the underline zip, then the orange whip
+  for (let k = 0; k < 5; k++) place(fx, tick(2800 + k * 220, 0.008), 3.2 + k * 0.045 + 0.1, 0.12, -0.4 + k * 0.2, 0.2);
+  place(fx, whoosh(0.4, 900, 3800, { peak: 0.8, q: 3, pan0: -0.5, pan1: 0.5 }), 3.58, 0.22, 0, 0.2);
+  place(fx, whoosh(0.3, 500, 6000, { peak: 0.75, pan0: -0.9, pan1: 0.9 }), 5.12, 0.7, 0, 0.15);
+  place(fx, crash(0.7, 0.14), 5.38, 0.3, 0, 0.15);
 
-  // Scene 3: each shape pair lands on a 16th with a pentatonic pluck
+  // ---- Clean visuals (5.4-8s): each shape pair lands on a 16th with a pentatonic pluck
+  place(fx, whoosh(0.45, 500, 2600, { peak: 0.85, pan0: -0.8, pan1: 0 }), 5.6, 0.3, 0, 0.15); // title slide
   const penta = [77, 80, 82, 84, 87, 89, 92];
   for (let k = 0; k < SHAPE_LAND.length; k += 2) {
-    const t = SHAPE_LAND[k], m = penta[k / 2];
-    place(music, pluck(midi(m)), t, 0.2, k % 4 ? 0.35 : -0.35, 0.3);
+    const t = SHAPE_LAND[k];
+    place(music, pluck(midi(penta[k / 2])), t, 0.2, k % 4 ? 0.35 : -0.35, 0.3);
     place(fx, tick(4200, 0.006), t, 0.12, 0, 0);
   }
-  place(fx, whoosh(0.5, 500, 2600, { peak: 0.85, pan0: -0.8, pan1: 0 }), 6.22, 0.3, 0, 0.15); // title slide
-  [8.5, 9.0, 9.5].forEach((t, i) => place(music, pluck(midi([84, 87, 89][i]), 0.18), t, 0.12, 0, 0.35));
+  [7.0, 7.25, 7.5].forEach((t, i) => place(music, pluck(midi([84, 87, 89][i]), 0.18), t, 0.12, 0, 0.35));
+  place(music, pluck(midi(96), 0.2), 7.56, 0.2, 0.3, 0.3); // the circle turns lime
+  // lime transition: dive into the circle
+  place(fx, reverse(crash(0.5, 0.25)), 7.5, 0.45, 0, 0.3);
+  place(fx, whoosh(0.34, 300, 9000, { peak: 0.96, q: 1.1, pan0: 0.3, pan1: 0, tail: 0.05 }), 7.62, 0.85, 0, 0.1);
 
-  // Scene 4: morph swirl, then the glide
-  place(fx, whoosh(0.6, 4000, 600, { peak: 0.3, pan0: 0.5, pan1: -0.5 }), 9.82, 0.32, 0, 0.2);
-  place(music, glideLead(1.85), 10.52, 0.32, 0, 0.35);
-  // Build into the drop
-  for (let t = 12.0; t < 13.0 - 1e-9; t += t < 12.5 ? 0.125 : 0.0625) {
-    const x = (t - 12.0) / 1.0;
+  // ---- Smooth motion (8-11s): zoom out of the circle, then the glide
+  place(fx, crash(1.4, 0.4), 8.0, 0.32, 0, 0.3);
+  place(fx, whoosh(0.5, 7000, 500, { peak: 0.08, pan0: 0, pan1: 0 }), 8.0, 0.4, 0, 0.2);
+  place(music, glideLead(2.0), 8.2, 0.32, 0, 0.35);
+  // build: snare roll and riser while the camera pulls back
+  for (let t = 10.0; t < 11.0 - 1e-9; t += t < 10.5 ? 0.125 : 0.0625) {
+    const x = t - 10.0;
     place(drums, snare(1 + 0.25 * x), t, 0.12 + 0.4 * x * x, 0, 0.15);
   }
-  place(fx, riser(1.0), 12.0, 0.55, 0, 0.25);
+  place(fx, riser(1.0), 10.0, 0.55, 0, 0.25);
+  place(fx, whoosh(0.32, 400, 7000, { peak: 0.95, pan0: 0, pan1: 0, tail: 0.04 }), 10.66, 0.6, 0, 0.1); // pink square
 
-  // ---- Scene 5: drop. Quick cuts on 8ths, then the big punch.
-  K(13.0, { f0: 220, f1: 50, decay: 0.25, drive: 2.4, click: 0.8 }, 1.0, 0.1);
-  K(13.25, { f0: 260, f1: 58, decay: 0.2, drive: 2.4, click: 0.8 }, 0.95, 0.1);
-  place(fx, crash(0.6, 0.12), 13.0, 0.3, -0.3, 0.1);
-  place(fx, crash(0.6, 0.12), 13.25, 0.3, 0.3, 0.1);
-  place(drums, boom({ f0: 200, decay: 0.7 }), 13.5, 0.9, 0, 0.08);
-  K(13.5, { f0: 200, f1: 48, decay: 0.32, drive: 2.6, click: 1 }, 1.05, 0.12);
-  place(fx, crash(2.6, 0.9), 13.5, 0.5, 0, 0.4);
-  for (const t of [14.0, 14.5, 15.0, 15.5]) K(t, { f0: 170, f1: 47, decay: 0.3, drive: 2.2 }, 1.0);
-  K(15.75, { f0: 170, f1: 47, decay: 0.2, drive: 2.2 }, 0.8);
-  for (const t of [13.5, 14.5, 15.5]) place(drums, clap(), t, 0.55, 0, 0.25);
-  for (const t of [14.0, 15.0]) place(drums, snare(1.1), t, 0.28, 0, 0.2);
-  for (let t = 13.75; t < 16.0; t += 0.5) place(drums, hat(0.16), t, 0.22, 0.3, 0.1);
-  for (let t = 13.5; t < 16.0; t += 0.125) place(drums, hat(0.025), t, 0.1, -0.3, 0);
-  for (const t of [14.25, 14.75, 15.25]) place(fx, tick(5200, 0.015), t, 0.18, 0, 0.2);
-  // rolling 16th bass between kicks, chord per half bar
-  [[13.5, 41], [14.0, 37], [14.5, 37], [15.0, 39], [15.5, 39]].forEach(([t0, root]) => {
+  // ---- Strong hooks (11-13s): the drop. Quick cuts on 8ths, then the big punch.
+  K(11.0, { f0: 220, f1: 50, decay: 0.25, drive: 2.4, click: 0.8 }, 1.0, 0.1);
+  K(11.25, { f0: 260, f1: 58, decay: 0.2, drive: 2.4, click: 0.8 }, 0.95, 0.1);
+  place(fx, crash(0.6, 0.12), 11.0, 0.3, -0.3, 0.1);
+  place(fx, crash(0.6, 0.12), 11.25, 0.3, 0.3, 0.1);
+  place(drums, boom({ f0: 200, decay: 0.7 }), 11.5, 0.9, 0, 0.08);
+  K(11.5, { f0: 200, f1: 48, decay: 0.32, drive: 2.6, click: 1 }, 1.05, 0.12);
+  place(fx, crash(2.0, 0.8), 11.5, 0.5, 0, 0.4);
+  for (const t of [12.0, 12.5]) K(t, { f0: 170, f1: 47, decay: 0.3, drive: 2.2 }, 1.0);
+  place(drums, clap(), 11.5, 0.55, 0, 0.25);
+  place(drums, clap(), 12.5, 0.55, 0, 0.25);
+  place(drums, snare(1.1), 12.0, 0.28, 0, 0.2);
+  for (const t of [11.75, 12.25]) place(drums, hat(0.16), t, 0.22, 0.3, 0.1);
+  for (let t = 11.5; t < 12.7; t += 0.125) place(drums, hat(0.025), t, 0.1, -0.3, 0);
+  for (const t of [11.75, 12.25, 12.625]) place(fx, tick(5200, 0.015), t, 0.18, 0, 0.2);
+  [[11.5, 41], [12.0, 41], [12.5, 37]].forEach(([t0, root]) => {
     [0.125, 0.25, 0.375].forEach((o, k) => place(music, bassNote(root + (k === 1 ? 12 : 0), 0.1, { cut: 420, env: 2600, drive: 3.2 }), t0 + o, 0.45, 0, 0));
   });
-  place(music, chord([53, 56, 60, 65], 0.5, { cut: 3200, decay: 0.25, release: 0.1 }), 13.5, 0.42, 0, 0.3);
-  place(music, chord([49, 53, 56, 60], 1.0, { cut: 2800, decay: 0.3, release: 0.1 }), 14.0, 0.4, 0, 0.3);
-  place(music, chord([51, 55, 58, 63], 1.0, { cut: 3200, decay: 0.3, release: 0.1 }), 15.0, 0.42, 0, 0.3);
-  for (let t = 15.5; t < 16.0 - 1e-9; t += 0.0625) place(drums, snare(1.2), t, 0.1 + 0.25 * ((t - 15.5) / 0.5), 0, 0.15);
-  place(fx, reverse(crash(0.6, 0.3)), 15.4, 0.35, 0, 0.3);
+  place(music, chord([53, 56, 60, 65], 0.5, { cut: 3200, decay: 0.25, release: 0.1 }), 11.5, 0.42, 0, 0.3);
+  place(music, chord([53, 56, 60, 63], 0.5, { cut: 3000, decay: 0.25, release: 0.1 }), 12.0, 0.4, 0, 0.3);
+  place(music, chord([49, 53, 56, 60], 0.5, { cut: 2800, decay: 0.3, release: 0.1 }), 12.5, 0.4, 0, 0.3);
+  // violet transition: zoom out to a card, then a new card zooms in
+  place(fx, whoosh(0.32, 6000, 400, { peak: 0.2, pan0: 0.4, pan1: -0.4 }), 12.66, 0.6, 0, 0.2);
+  K(13.0, { f0: 190, f1: 47, decay: 0.3, drive: 2.2, click: 0.8 }, 1.0, 0.1);
+  place(fx, whoosh(0.34, 400, 6000, { peak: 0.8, pan0: -0.4, pan1: 0.4 }), 13.0, 0.45, 0, 0.15);
 
-  // ---- Scene 6: settle. Pad, slow arpeggio, chimes on the contact pulses.
+  // ---- Recap (13-16s): a hit for each line, the impact on "STRONG HOOKS."
+  [[13.25, 79], [13.75, 84], [14.25, 87]].forEach(([t, m]) => {
+    place(fx, tick(3600, 0.012), t, 0.3, 0, 0.15);
+    place(music, pluck(midi(m), 0.22), t, 0.18, 0, 0.3);
+  });
+  place(drums, boom({ f0: 190, decay: 0.6 }), 14.5, 0.8, 0, 0.1);
+  place(fx, crash(1.8, 0.7), 14.5, 0.42, 0, 0.35);
+  // yellow transition: bars drop in, then fall away
+  for (let t = 15.5; t < 16.0 - 1e-9; t += 0.0625) place(drums, snare(1.2), t, 0.1 + 0.25 * ((t - 15.5) / 0.5), 0, 0.15);
+  place(fx, whoosh(0.3, 6000, 600, { peak: 0.5, pan0: -0.6, pan1: 0.6 }), 15.7, 0.5, 0, 0.15);
+
+  // ---- Call to action (16-20s): settle. Pad, slow arpeggio, chimes on the contact pulses.
   place(drums, boom({ f0: 120, decay: 1.2, drive: 1.4 }), 16.0, 0.55, 0, 0.1);
   place(fx, whoosh(1.0, 5000, 300, { peak: 0.08, pan0: 0, pan1: 0 }), 16.0, 0.3, 0, 0.4);
   place(music, chord([49, 53, 56, 60, 63], 2.0, { cut: 900, cutEnd: 1500, attack: 0.25, release: 0.6, voices: 3 }), 16.0, 0.48, 0, 0.45);
@@ -441,7 +465,7 @@ export function synthesize() {
   place(music, bassNote(41, 1.9, { cut: 180, env: 300, drive: 1.2 }), 18.0, 0.35, 0, 0);
   const arp = [[16.5, 72], [16.75, 75], [17.0, 77], [17.25, 80], [17.5, 77], [17.75, 75], [18.5, 77], [18.75, 80], [19.0, 84], [19.25, 80]];
   arp.forEach(([t, m], i) => place(music, pluck(midi(m), 0.35), t, 0.09, i % 2 ? 0.4 : -0.4, 0.5));
-  place(music, bell(midi(84)), 17.3, 0.22, 0.1, 0.5); // handle appears
+  place(music, bell(midi(84)), 16.85, 0.22, 0.1, 0.5); // handle appears
   place(music, bell(midi(80)), 18.0, 0.16, -0.2, 0.55); // pulses
   place(music, bell(midi(77)), 19.0, 0.14, 0.2, 0.6);
 
@@ -474,7 +498,7 @@ export function synthesize() {
     R[i] = Math.tanh(R[i] * 1.1) * fade;
     peak = Math.max(peak, Math.abs(L[i]), Math.abs(R[i]));
   }
-  const norm = 0.89 / peak; // about -1 dBFS
+  const norm = 0.75 / peak; // sample peak -2.5 dBFS keeps the true peak under -1 dBTP
   for (let i = 0; i < N; i++) { L[i] *= norm; R[i] *= norm; }
   return { L, R, sampleRate: SR };
 }
