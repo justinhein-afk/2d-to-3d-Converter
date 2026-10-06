@@ -361,6 +361,12 @@ input[type='text'] {
   background: rgba(232, 192, 96, 0.12);
   border: 1px solid rgba(232, 192, 96, 0.35);
 }
+.fineprint {
+  margin-top: 14px;
+  font-size: 11px;
+  color: var(--muted);
+  text-align: center;
+}
 .world-row .confirm-text {
   font-size: 12px;
   color: var(--gold-soft);

@@ -38,6 +38,7 @@ export class TitleScreen {
     const create = el('button', 'btn primary', card, 'Create & Play');
     create.addEventListener('click', () => this.createWorld());
     if (!storage) el('div', 'notice', card, 'IndexedDB is unavailable here, so this world will not be saved.');
+    el('div', 'fineprint', card, 'Fan-made game. Not affiliated with Kuro Games or Wuthering Waves.');
     void this.refresh();
   }
 

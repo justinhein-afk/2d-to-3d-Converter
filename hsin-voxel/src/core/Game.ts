@@ -866,6 +866,8 @@ export class Game {
     }
     this.rig.yaw = bestYaw;
     this.player.yaw = bestYaw;
+    // Start at the right distance instead of easing out from wherever the camera was while loading.
+    this.rig.distance = this.rig.clearDistance(feet, this.world);
   }
 
   private blockOverlapsPlayer(x: number, y: number, z: number): boolean {
