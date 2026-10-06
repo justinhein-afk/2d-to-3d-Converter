@@ -8,6 +8,9 @@ import type { World } from '../world/World';
 
 export type CameraMode = 'third' | 'first';
 
+/** Side and vertical offsets of the camera collision rays (a ray bundle catches thin gaps). */
+const BACK_RAYS: Array<[number, number]> = [[0, 0], [0.18, 0.12], [-0.18, 0.12], [0.18, -0.12], [-0.18, -0.12]];
+
 export class CameraRig {
   readonly camera: THREE.PerspectiveCamera;
   mode: CameraMode = 'third';
@@ -108,21 +111,38 @@ export class CameraRig {
 
     // Pull the camera in front of any block between the pivot and the wanted position.
     const back = this.tmp2.copy(this.forward).negate();
-    let allowed = this.zoom;
-    const up = Math.cos(this.pitch);
-    const offsets: Array<[number, number]> = [[0, 0], [0.18, 0.12], [-0.18, 0.12], [0.18, -0.12], [-0.18, -0.12]];
-    for (const [ox, oy] of offsets) {
-      const sx = this.pivot.x + this.right.x * ox;
-      const sy = this.pivot.y + oy * up;
-      const sz = this.pivot.z + this.right.z * ox;
-      const hit = raycastVoxels(get, sx, sy, sz, back.x, back.y, back.z, this.zoom + pad, solid);
-      if (hit) allowed = Math.min(allowed, hit.dist - pad);
-    }
-    allowed = Math.max(0.05, allowed);
+    const allowed = this.castBack(this.pivot, back, world);
     if (allowed < this.distance) this.distance = allowed;
     else this.distance = damp(this.distance, allowed, 5, dt);
     cam.position.copy(this.pivot).addScaledVector(back, this.distance);
     this.applyShake();
+  }
+
+  /**
+   * How far behind a player standing at `feet` the camera could sit with the current yaw and pitch
+   * before a block gets in the way (used to pick a clear view at spawn).
+   */
+  clearDistance(feet: THREE.Vector3, world: World, pivotHeight: number = GAME.camera.pivotHeight): number {
+    this.updateVectors();
+    const pivot = new THREE.Vector3(feet.x, feet.y + pivotHeight, feet.z).addScaledVector(this.right, GAME.camera.shoulderOffset);
+    return this.castBack(pivot, this.forward.clone().negate(), world);
+  }
+
+  /** Casts a small bundle of rays back from the pivot; returns the allowed camera distance. */
+  private castBack(pivot: THREE.Vector3, back: THREE.Vector3, world: World): number {
+    const pad = GAME.camera.collisionPadding;
+    const solid = (id: number) => IS_SOLID[id] === 1;
+    const get = (x: number, y: number, z: number) => world.getBlock(x, y, z);
+    let allowed = this.zoom;
+    const up = Math.cos(this.pitch);
+    for (const [ox, oy] of BACK_RAYS) {
+      const sx = pivot.x + this.right.x * ox;
+      const sy = pivot.y + oy * up;
+      const sz = pivot.z + this.right.z * ox;
+      const hit = raycastVoxels(get, sx, sy, sz, back.x, back.y, back.z, this.zoom + pad, solid);
+      if (hit) allowed = Math.min(allowed, hit.dist - pad);
+    }
+    return Math.max(0.05, allowed);
   }
 
   private applyShake(): void {

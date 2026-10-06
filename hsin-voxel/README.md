@@ -36,7 +36,8 @@ Click the game to capture the mouse; press **Esc** to pause.
 | Double-tap W / Left Ctrl | Sprint |
 | Space | Jump / swim up / skip a cutscene |
 | Shift | Dodge: a quick dash with a short invulnerability window (costs stamina) |
-| Mouse | Orbit the over-the-shoulder camera |
+| Mouse | Orbit the over-the-shoulder camera (click the game to capture the mouse) |
+| Right-drag | Look around when the page can't capture the mouse (some embedded pages) |
 | Mouse wheel | Zoom the camera in and out |
 | Left click | Slot 1 (Rectifier): attack, hold for a Heavy Attack. Other slots: hold to break the targeted block |
 | E / R | Resonance Skill / Resonance Liberation (see the combat kit below) |

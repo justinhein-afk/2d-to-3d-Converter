@@ -40,6 +40,7 @@ import { PauseMenu } from '../ui/PauseMenu';
 import { Toasts } from '../ui/Toasts';
 import { Vitals } from '../ui/Vitals';
 import { B, IS_SOLID, blockDef } from '../world/blocks';
+import { raycastVoxels } from '../world/raycast';
 import { createChunkMaterials, env } from '../world/materials';
 import { Sky } from '../world/Sky';
 import type { WorldMeta, WorldStorage } from '../world/storage';
@@ -229,7 +230,7 @@ export class Game {
     this.bossBar = new BossBar(this.hudLayer);
     this.debug = new DebugOverlay(this.hudLayer);
     this.debug.setFpsVisible(settings.data.showFps);
-    this.clickHint = el('div', 'click-to-play hidden', this.hudLayer, 'Click to capture the mouse');
+    this.clickHint = el('div', 'click-to-play hidden', this.hudLayer, 'Click to capture the mouse (or right-drag to look)');
     this.inventoryScreen = new InventoryScreen(container, this.inventory);
     this.inventoryScreen.onClose = () => this.closeInventory(false);
     this.inventoryScreen.onDrop = (s) => this.dropStack(s.id, s.count);
@@ -419,7 +420,10 @@ export class Game {
     input.enabled = playing;
 
     if (playing) {
-      if (input.locked) this.rig.applyMouse(input.mouseDX, input.mouseDY, this.settings.data.mouseSensitivity, this.settings.data.invertY);
+      // Mouse movement arrives while the mouse is captured, or while right-dragging without capture.
+      if (input.mouseDX !== 0 || input.mouseDY !== 0) {
+        this.rig.applyMouse(input.mouseDX, input.mouseDY, this.settings.data.mouseSensitivity, this.settings.data.invertY);
+      }
       if (input.wheel !== 0) this.rig.applyZoom(input.wheel);
       if (input.actionPressed('toggleView')) this.rig.mode = this.rig.mode === 'first' ? 'third' : 'first';
       const slot = input.hotbarPressed();
@@ -814,22 +818,54 @@ export class Game {
     const sx = Math.floor(this.spawn.x);
     const sz = Math.floor(this.spawn.z);
     const ground = new Set<number>([B.GRASS, B.DIRT, B.SAND, B.SNOW, B.STONE, B.GRAVEL, B.SANDSTONE]);
-    let best: [number, number, number] | null = null;
-    for (let r = 0; r <= 12 && !best; r++) {
-      for (let dz = -r; dz <= r && !best; dz++) {
-        for (let dx = -r; dx <= r && !best; dx++) {
-          if (Math.max(Math.abs(dx), Math.abs(dz)) !== r) continue;
-          const x = sx + dx;
-          const z = sz + dz;
-          const top = this.world.topSolidY(x, z);
-          if (top > 0 && ground.has(this.world.getBlock(x, top, z))) best = [x, top + 1, z];
+    // Open ground around her, so the first view isn't squeezed against a tree or a cliff.
+    const roomy = (x: number, top: number, z: number): boolean => {
+      for (let dz = -2; dz <= 2; dz++) {
+        for (let dx = -2; dx <= 2; dx++) {
+          for (let dy = 1; dy <= 4; dy++) if (this.world.isSolid(x + dx, top + dy, z + dz)) return false;
         }
       }
-    }
-    const [x, y, z] = best ?? [sx, this.world.topSolidY(sx, sz) + 1, sz];
+      return true;
+    };
+    const search = (radius: number, needRoom: boolean): [number, number, number] | null => {
+      for (let r = 0; r <= radius; r++) {
+        for (let dz = -r; dz <= r; dz++) {
+          for (let dx = -r; dx <= r; dx++) {
+            if (Math.max(Math.abs(dx), Math.abs(dz)) !== r) continue;
+            const x = sx + dx;
+            const z = sz + dz;
+            const top = this.world.topSolidY(x, z);
+            if (top <= 0 || !ground.has(this.world.getBlock(x, top, z))) continue;
+            if (!needRoom || roomy(x, top, z)) return [x, top + 1, z];
+          }
+        }
+      }
+      return null;
+    };
+    const [x, y, z] = search(16, true) ?? search(12, false) ?? [sx, this.world.topSolidY(sx, sz) + 1, sz];
     this.spawn.set(x + 0.5, y, z + 0.5);
     this.player.setPosition(x + 0.5, y, z + 0.5);
     this.needsSpawnPlacement = false;
+
+    // Face the most open direction: room behind her for the camera, then the longest view ahead.
+    const get = (bx: number, by: number, bz: number) => this.world.getBlock(bx, by, bz);
+    const solid = (id: number) => IS_SOLID[id] === 1;
+    const feet = new THREE.Vector3(x + 0.5, y, z + 0.5);
+    let bestYaw = 0;
+    let bestScore = -Infinity;
+    for (let i = 0; i < 8; i++) {
+      const yaw = (i * Math.PI) / 4;
+      this.rig.yaw = yaw;
+      const behind = this.rig.clearDistance(feet, this.world);
+      const ahead = raycastVoxels(get, feet.x, y + GAME.camera.pivotHeight, feet.z, -Math.sin(yaw), 0, -Math.cos(yaw), 24, solid)?.dist ?? 24;
+      const score = (behind >= this.rig.zoom - 0.01 ? 100 : behind * 10) + ahead;
+      if (score > bestScore) {
+        bestScore = score;
+        bestYaw = yaw;
+      }
+    }
+    this.rig.yaw = bestYaw;
+    this.player.yaw = bestYaw;
   }
 
   private blockOverlapsPlayer(x: number, y: number, z: number): boolean {

@@ -18,6 +18,9 @@ export class TitleScreen {
     const card = el('div', 'panel title-card', this.root);
     el('div', 'logo', card, 'HSIN · VOXEL');
     el('div', 'subtitle', card, 'A blocky sandbox starring the Moon Fox of Mengzhou');
+    if (typeof matchMedia === 'function' && !matchMedia('(any-pointer: fine)').matches) {
+      el('div', 'notice warn', card, 'This game is played with a keyboard and mouse. Open this page on a computer to play.');
+    }
 
     el('h3', '', card, 'Your worlds');
     this.list = el('div', 'world-list', card);
@@ -39,8 +42,13 @@ export class TitleScreen {
   }
 
   async refresh(): Promise<void> {
+    let worlds: WorldMeta[] = [];
+    try {
+      worlds = this.storage ? await this.storage.listWorlds() : [];
+    } catch (err) {
+      console.warn('Could not read saved worlds.', err);
+    }
     this.list.innerHTML = '';
-    const worlds = this.storage ? await this.storage.listWorlds() : [];
     if (worlds.length === 0) {
       el('div', 'notice', this.list, 'No saved worlds yet.');
       return;
@@ -54,10 +62,21 @@ export class TitleScreen {
       const play = el('button', 'btn small primary', btns, 'Play');
       play.addEventListener('click', () => this.onPlay(w, false));
       const del = el('button', 'btn small danger', btns, 'Delete');
-      del.addEventListener('click', async () => {
-        if (!confirm(`Delete "${w.name}"? This cannot be undone.`)) return;
-        await this.storage?.deleteWorld(w.id);
-        void this.refresh();
+      // Confirm inside the row: browser confirm() dialogs are blocked on some embedded pages.
+      del.addEventListener('click', () => {
+        btns.innerHTML = '';
+        el('span', 'confirm-text', btns, 'Delete for good?');
+        const yes = el('button', 'btn small danger', btns, 'Delete');
+        const no = el('button', 'btn small', btns, 'Keep');
+        yes.addEventListener('click', async () => {
+          try {
+            await this.storage?.deleteWorld(w.id);
+          } catch (err) {
+            console.warn('Could not delete the world.', err);
+          }
+          void this.refresh();
+        });
+        no.addEventListener('click', () => void this.refresh());
       });
     }
   }

@@ -26,6 +26,7 @@ export const KEYBIND_HELP: Array<[string, string]> = [
   ['Space', 'Jump / swim up / skip cutscene'],
   ['Shift', 'Dodge (short invulnerability)'],
   ['Mouse', 'Look around (click the game to capture the mouse)'],
+  ['Right-drag', 'Look around when the mouse can\'t be captured'],
   ['Mouse wheel', 'Camera zoom'],
   ['1 - 9', 'Select hotbar slot (slot 1 is the Rectifier)'],
   ['Left click', 'Rectifier: attack (hold for Heavy Attack) / other slots: break block'],

@@ -13,6 +13,7 @@
   --slot: rgba(20, 22, 34, 0.78);
   --slot-border: rgba(255, 255, 255, 0.14);
   --font: 'Segoe UI', system-ui, -apple-system, Roboto, 'Helvetica Neue', Arial, sans-serif;
+  color-scheme: dark;
 }
 
 * {
@@ -352,6 +353,17 @@ input[type='text'] {
   font-size: 12px;
   color: var(--muted);
   margin-top: 10px;
+}
+.notice.warn {
+  padding: 8px 10px;
+  border-radius: 8px;
+  color: var(--gold-soft);
+  background: rgba(232, 192, 96, 0.12);
+  border: 1px solid rgba(232, 192, 96, 0.35);
+}
+.world-row .confirm-text {
+  font-size: 12px;
+  color: var(--gold-soft);
 }
 
 /* ---------- Inventory ---------- */

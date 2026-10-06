@@ -20,6 +20,15 @@ export class Input {
   /** When false, game input is ignored (menus open). */
   enabled = true;
   private onLockChange: ((locked: boolean) => void) | null = null;
+  /**
+   * Without pointer lock (some embedded pages block it) the right button drags the camera.
+   * A right click that doesn't drag still counts as a normal right click.
+   */
+  private rightPending = false;
+  private dragLooking = false;
+  private dragDistance = 0;
+  /** Browsers can report one large jump right after the mouse is captured; it is ignored. */
+  private skipNextMove = false;
 
   constructor(private readonly element: HTMLElement) {
     window.addEventListener('keydown', (e) => this.onKeyDown(e));
@@ -29,8 +38,21 @@ export class Input {
     window.addEventListener('mouseup', (e) => this.onMouseUp(e));
     window.addEventListener('mousemove', (e) => {
       if (this.locked) {
+        if (this.skipNextMove) {
+          this.skipNextMove = false;
+          return;
+        }
+        // Drop implausible spikes (a known browser quirk with captured mice).
+        if (Math.abs(e.movementX) > 400 || Math.abs(e.movementY) > 400) return;
         this.mouseDX += e.movementX;
         this.mouseDY += e.movementY;
+      } else if (this.rightPending) {
+        this.dragDistance += Math.abs(e.movementX) + Math.abs(e.movementY);
+        if (this.dragDistance > 6) this.dragLooking = true;
+        if (this.dragLooking) {
+          this.mouseDX += e.movementX;
+          this.mouseDY += e.movementY;
+        }
       }
     });
     element.addEventListener('wheel', (e) => {
@@ -39,6 +61,7 @@ export class Input {
     }, { passive: false });
     element.addEventListener('contextmenu', (e) => e.preventDefault());
     document.addEventListener('pointerlockchange', () => {
+      this.skipNextMove = this.locked;
       if (!this.locked) this.releaseAll();
       this.onLockChange?.(this.locked);
     });
@@ -86,17 +109,35 @@ export class Input {
 
   private onMouseDown(e: MouseEvent): void {
     if (e.button > 2) return;
+    if (e.button === 2 && !this.locked) {
+      this.rightPending = true;
+      this.dragLooking = false;
+      this.dragDistance = 0;
+      return;
+    }
     this.mouseDown[e.button] = true;
     this.mousePressed[e.button] = true;
   }
 
   private onMouseUp(e: MouseEvent): void {
     if (e.button > 2) return;
+    if (e.button === 2 && this.rightPending) {
+      // Released without dragging: a plain right click (place / use).
+      if (!this.dragLooking) {
+        this.mousePressed[2] = true;
+        this.mouseReleased[2] = true;
+      }
+      this.rightPending = false;
+      this.dragLooking = false;
+      return;
+    }
     if (this.mouseDown[e.button]) this.mouseReleased[e.button] = true;
     this.mouseDown[e.button] = false;
   }
 
   private releaseAll(): void {
+    this.rightPending = false;
+    this.dragLooking = false;
     for (const k of this.down) this.released.add(k);
     this.down.clear();
     for (let b = 0; b < 3; b++) {
