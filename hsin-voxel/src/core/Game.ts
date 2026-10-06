@@ -1,0 +1,595 @@
+// Owns the renderer, scene and every game system; runs the main loop.
+import * as THREE from 'three';
+import { CameraRig } from '../camera/CameraRig';
+import { GAME } from '../config/game';
+import { ItemDrops } from '../entities/ItemDrops';
+import { Particles } from '../fx/Particles';
+import { Inventory } from '../items/Inventory';
+import { I, itemDef } from '../items/items';
+import { BlockInteraction } from '../player/BlockInteraction';
+import { Player } from '../player/Player';
+import { DebugOverlay } from '../ui/DebugOverlay';
+import { el } from '../ui/dom';
+import { Hotbar } from '../ui/Hotbar';
+import { InventoryScreen } from '../ui/InventoryScreen';
+import { PauseMenu } from '../ui/PauseMenu';
+import { Toasts } from '../ui/Toasts';
+import { Vitals } from '../ui/Vitals';
+import { B, IS_SOLID, blockDef } from '../world/blocks';
+import { createChunkMaterials, env } from '../world/materials';
+import { Sky } from '../world/Sky';
+import type { WorldMeta, WorldStorage } from '../world/storage';
+import { BIOME_NAMES } from '../world/terrain';
+import { createBlockTextureArray, type TextureAtlas } from '../world/textures';
+import { World } from '../world/World';
+import { Input } from './Input';
+import type { Settings } from './Settings';
+
+export type GameState = 'loading' | 'playing' | 'paused' | 'inventory' | 'dead';
+
+export interface PlayerSave {
+  version: 1;
+  pos: [number, number, number];
+  yaw: number;
+  camYaw: number;
+  camPitch: number;
+  health: number;
+  inventory: Array<[number, number] | null>;
+  selected: number;
+  time: number;
+  spawn: [number, number, number];
+}
+
+const STARTER_KIT: Array<[number, number]> = [
+  [B.PLANKS, 32],
+  [B.COBBLESTONE, 32],
+  [B.GLASS, 16],
+  [B.LANTERN, 8],
+  [B.CRAFTING_TABLE, 1],
+  [B.STONE_BRICKS, 32],
+  [B.BRICKS, 16],
+  [B.WOOL, 16],
+  [I.COOKED_MEAT, 8],
+];
+
+export class Game {
+  readonly renderer: THREE.WebGLRenderer;
+  readonly scene = new THREE.Scene();
+  readonly rig: CameraRig;
+  readonly input: Input;
+  readonly world: World;
+  readonly sky: Sky;
+  readonly particles: Particles;
+  readonly drops: ItemDrops;
+  readonly player = new Player();
+  readonly inventory = new Inventory();
+  readonly interaction: BlockInteraction;
+  readonly blockTexture: THREE.DataArrayTexture;
+  state: GameState = 'loading';
+  time = 0;
+  private spawn = new THREE.Vector3();
+  private needsSpawnPlacement = false;
+  private autosaveTimer: number = GAME.world.autosaveSeconds;
+  private last = performance.now();
+  private running = false;
+  private rafId = 0;
+  private suppressUnlockPause = false;
+  private pausedAt = -1;
+
+  // UI
+  readonly hud: HTMLDivElement;
+  readonly toasts: Toasts;
+  private readonly hotbar: Hotbar;
+  private readonly vitals: Vitals;
+  private readonly inventoryScreen: InventoryScreen;
+  private readonly pauseMenu: PauseMenu;
+  private readonly debug: DebugOverlay;
+  private readonly crosshair: HTMLDivElement;
+  private readonly clickHint: HTMLDivElement;
+  private readonly loadingEl: HTMLDivElement;
+  private readonly deathEl: HTMLDivElement;
+  private readonly underwaterEl: HTMLDivElement;
+  private readonly vignette: HTMLDivElement;
+
+  private constructor(
+    private readonly container: HTMLElement,
+    readonly meta: WorldMeta,
+    private readonly storage: WorldStorage | null,
+    readonly settings: Settings,
+    atlas: TextureAtlas,
+    private readonly onQuit: () => void,
+  ) {
+    this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
+    this.renderer.setSize(container.clientWidth, container.clientHeight);
+    this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+    container.appendChild(this.renderer.domElement);
+    this.renderer.domElement.tabIndex = 0;
+
+    this.rig = new CameraRig(container.clientWidth / container.clientHeight);
+    this.rig.mode = 'first';
+    this.rig.setFov(settings.data.fov);
+    this.input = new Input(this.renderer.domElement);
+    this.input.doubleTapWindow = GAME.player.doubleTapWindow;
+
+    this.blockTexture = createBlockTextureArray(atlas);
+    const materials = createChunkMaterials(this.blockTexture);
+    this.world = new World(meta.seed, meta.id, storage, materials, settings.data.renderDistance);
+    this.scene.add(this.world.group);
+    this.sky = new Sky(this.scene);
+    this.particles = new Particles(this.scene);
+    this.drops = new ItemDrops(this.scene, this.world, this.blockTexture);
+    this.interaction = new BlockInteraction(this.scene, this.blockTexture);
+
+    // ---- UI ----
+    this.hud = el('div', 'layer', container);
+    this.underwaterEl = el('div', 'underwater-tint hidden', this.hud);
+    this.vignette = el('div', 'damage-vignette', this.hud);
+    this.crosshair = el('div', 'crosshair', this.hud);
+    this.vitals = new Vitals(this.hud);
+    this.hotbar = new Hotbar(this.hud, this.inventory);
+    this.toasts = new Toasts(this.hud);
+    this.debug = new DebugOverlay(this.hud);
+    this.debug.setFpsVisible(settings.data.showFps);
+    this.clickHint = el('div', 'click-to-play hidden', this.hud, 'Click to capture the mouse');
+    this.inventoryScreen = new InventoryScreen(container, this.inventory);
+    this.inventoryScreen.onClose = () => this.closeInventory(false);
+    this.inventoryScreen.onDrop = (s) => this.dropStack(s.id, s.count);
+    this.pauseMenu = new PauseMenu(container, settings, {
+      resume: () => this.resume(),
+      save: () => this.save(),
+      quit: () => void this.quitToTitle(),
+    });
+    this.loadingEl = el('div', 'loading', container);
+    el('div', 'spinner', this.loadingEl);
+    el('div', '', this.loadingEl, 'Generating terrain…');
+    this.deathEl = el('div', 'screen hidden', container);
+    const deathCard = el('div', 'panel title-card', this.deathEl);
+    el('h2', '', deathCard, 'Hsin has fallen');
+    el('div', 'subtitle', deathCard, 'The Moon Fox will rise again.');
+    const respawn = el('button', 'btn primary', deathCard, 'Respawn');
+    respawn.addEventListener('click', () => this.respawn());
+
+    settings.onChange((s) => this.applySettings(s));
+    this.applySettings(settings.data);
+
+    this.input.setLockListener((locked) => {
+      if (!locked && this.state === 'playing' && !this.suppressUnlockPause) this.pause();
+      this.suppressUnlockPause = false;
+    });
+    this.renderer.domElement.addEventListener('click', () => {
+      if (this.state === 'playing') this.input.requestLock();
+    });
+    window.addEventListener('resize', this.onResize);
+    document.addEventListener('visibilitychange', this.onVisibility);
+
+    this.player.onFallDamage = (amount) => this.damagePlayer(amount, 'fall');
+  }
+
+  static async create(
+    container: HTMLElement,
+    meta: WorldMeta,
+    storage: WorldStorage | null,
+    settings: Settings,
+    atlas: TextureAtlas,
+    isNew: boolean,
+    onQuit: () => void,
+  ): Promise<Game> {
+    const game = new Game(container, meta, storage, settings, atlas, onQuit);
+    await game.world.init();
+    const save = !isNew && storage ? await storage.loadPlayer<PlayerSave>(meta.id) : null;
+    if (save) game.loadPlayer(save);
+    else game.newPlayer();
+    meta.lastPlayed = Date.now();
+    if (storage) await storage.saveWorldMeta(meta);
+    return game;
+  }
+
+  private newPlayer(): void {
+    const s = this.world.generator.findSpawnColumn();
+    this.spawn.set(s.x, s.height + 1, s.z);
+    this.player.setPosition(s.x, s.height + 1, s.z);
+    this.needsSpawnPlacement = true;
+    for (const [id, n] of STARTER_KIT) this.inventory.add(id, n);
+    this.inventory.selected = 0;
+    this.sky.time = GAME.world.startTime;
+  }
+
+  private loadPlayer(s: PlayerSave): void {
+    this.player.setPosition(s.pos[0], s.pos[1], s.pos[2]);
+    this.player.yaw = s.yaw;
+    this.rig.yaw = s.camYaw;
+    this.rig.pitch = s.camPitch;
+    this.player.health = Math.max(1, s.health);
+    this.inventory.load(s.inventory);
+    this.inventory.selected = s.selected ?? 0;
+    this.sky.time = s.time;
+    this.spawn.set(s.spawn[0], s.spawn[1], s.spawn[2]);
+  }
+
+  private playerSave(): PlayerSave {
+    const p = this.player.position;
+    return {
+      version: 1,
+      pos: [p.x, p.y, p.z],
+      yaw: this.player.yaw,
+      camYaw: this.rig.yaw,
+      camPitch: this.rig.pitch,
+      health: this.player.health,
+      inventory: this.inventory.serialize(),
+      selected: this.inventory.selected,
+      time: this.sky.time,
+      spawn: [this.spawn.x, this.spawn.y, this.spawn.z],
+    };
+  }
+
+  async save(): Promise<void> {
+    if (!this.storage) return;
+    try {
+      await this.world.saveAll();
+      await this.storage.savePlayer(this.meta.id, this.playerSave());
+      this.meta.lastPlayed = Date.now();
+      await this.storage.saveWorldMeta(this.meta);
+    } catch (err) {
+      console.error('Save failed', err);
+      this.toasts.show('Saving failed (see console).');
+    }
+  }
+
+  start(): void {
+    this.running = true;
+    this.last = performance.now();
+    const loop = (now: number) => {
+      if (!this.running) return;
+      this.rafId = requestAnimationFrame(loop);
+      this.frame(now);
+    };
+    this.rafId = requestAnimationFrame(loop);
+  }
+
+  /** Advances the game by one frame. Exposed so automated tests can step deterministically. */
+  frame(now: number): void {
+    const t0 = performance.now();
+    const dt = Math.min(0.05, Math.max(0, (now - this.last) / 1000));
+    this.last = now;
+    this.time += dt;
+    this.input.now = this.time;
+    this.update(dt);
+    this.renderer.render(this.scene, this.rig.camera);
+    this.input.endFrame();
+    if (this.debug.tick(dt, performance.now() - t0)) this.updateDebugText();
+  }
+
+  private update(dt: number): void {
+    const input = this.input;
+    const p = this.player;
+
+    // Global keys.
+    if (input.actionPressed('debug')) this.debug.toggle();
+    if (input.actionPressed('pause')) {
+      if (this.state === 'playing') this.pause();
+      else if (this.state === 'paused' && this.time - this.pausedAt > 0.3) this.resume();
+      else if (this.state === 'inventory') this.closeInventory(true);
+    }
+    if (input.actionPressed('inventory')) {
+      if (this.state === 'playing') this.openInventory(false);
+      else if (this.state === 'inventory') this.closeInventory(true);
+    }
+
+    // World streaming continues in every state so the view fills in.
+    this.world.update(p.position.x, p.position.z);
+
+    if (this.state === 'loading') {
+      const ready = this.world.areaReady(p.position.x, p.position.z, 1);
+      if (ready) {
+        if (this.needsSpawnPlacement) this.placeAtSpawn();
+        this.state = 'playing';
+        this.loadingEl.remove();
+        this.input.requestLock();
+      }
+    }
+
+    const playing = this.state === 'playing';
+    input.enabled = playing;
+
+    if (playing) {
+      if (input.locked) this.rig.applyMouse(input.mouseDX, input.mouseDY, this.settings.data.mouseSensitivity, this.settings.data.invertY);
+      if (input.wheel !== 0) this.rig.applyZoom(input.wheel);
+      if (input.actionPressed('toggleView')) this.rig.mode = this.rig.mode === 'first' ? 'third' : 'first';
+      const slot = input.hotbarPressed();
+      if (slot >= 0) {
+        this.inventory.selected = slot;
+        this.inventory.changed();
+      }
+      if (input.actionPressed('drop')) this.dropSelected();
+    }
+
+    // Player physics (frozen until the chunk under them exists).
+    if (this.state !== 'loading' && this.world.isLoadedAt(p.position.x, p.position.z) && this.state !== 'dead') {
+      const fwd = (input.action('forward') ? 1 : 0) - (input.action('back') ? 1 : 0);
+      const str = (input.action('right') ? 1 : 0) - (input.action('left') ? 1 : 0);
+      if (input.doubleTapForward) p.sprinting = true;
+      const sprint = input.action('sprint') || (p.sprinting && fwd > 0);
+      p.autoJump = this.settings.data.autoJump;
+      p.update(dt, { forward: playing ? fwd : 0, strafe: playing ? str : 0, jumpHeld: input.action('jump'), sprint, cameraYaw: this.rig.yaw }, this.world);
+      if (p.speed > 0.5) p.yaw = this.rig.yaw;
+    }
+
+    this.rig.update(dt, p.position, GAME.player.eyeHeight, this.world);
+    const cam = this.rig.camera;
+
+    // Block targeting / mining / placing.
+    if (playing) {
+      const eye = new THREE.Vector3(p.position.x, p.position.y + GAME.player.eyeHeight, p.position.z);
+      this.interaction.update(dt, {
+        world: this.world,
+        inventory: this.inventory,
+        rayOrigin: cam.position,
+        rayDir: this.rig.forward,
+        reachFrom: eye,
+        breakHeld: input.mouse(0),
+        placeClicked: input.mouseClicked(2),
+        placeHeld: input.mouse(2),
+        pickClicked: input.mouseClicked(1),
+        blockedByEntity: (x, y, z) => this.blockOverlapsPlayer(x, y, z),
+        onBreak: (x, y, z, id, drop) => {
+          this.particles.blockBreak(x, y, z, blockDef(id).color);
+          if (drop) this.drops.spawn(drop[0], drop[1], x + 0.5, y + 0.3, z + 0.5);
+        },
+        onPlace: () => {},
+        onUseItem: (id) => this.useItem(id),
+        onInteractBlock: (_x, _y, _z, id) => {
+          if (id === B.CRAFTING_TABLE) {
+            this.openInventory(true);
+            return true;
+          }
+          return false;
+        },
+        onMiningTick: () => {},
+      });
+    } else {
+      this.interaction.hide();
+    }
+
+    this.drops.update(dt, p.position, (id, count) => {
+      const left = this.inventory.add(id, count);
+      return count - left;
+    });
+    this.particles.update(dt);
+    this.particles.setViewport(this.renderer.domElement.height, cam.fov);
+
+    // Environment.
+    const camBlock = this.world.getBlock(Math.floor(cam.position.x), Math.floor(cam.position.y), Math.floor(cam.position.z));
+    this.sky.underwater = camBlock === B.WATER;
+    this.underwaterEl.classList.toggle('hidden', !this.sky.underwater);
+    this.sky.update(dt, cam, this.world.renderDistance, this.state === 'paused');
+    env.uTime.value = this.time;
+    env.uPlayerLightPos.value.set(p.position.x, p.position.y + 1.4, p.position.z);
+    cam.far = Math.max(this.world.renderDistance * 16 * 1.6, 420);
+    cam.updateProjectionMatrix();
+
+    // HUD.
+    this.hotbar.update(dt);
+    this.vitals.update(dt, p);
+    this.crosshair.classList.toggle('hidden', !playing);
+    this.clickHint.classList.toggle('hidden', !(playing && !input.locked));
+
+    // Autosave.
+    if (this.state === 'playing') {
+      this.autosaveTimer -= dt;
+      if (this.autosaveTimer <= 0) {
+        this.autosaveTimer = GAME.world.autosaveSeconds;
+        void this.save();
+      }
+    }
+  }
+
+  /** Puts the player on open ground near the spawn column (not on top of a tree). */
+  private placeAtSpawn(): void {
+    const sx = Math.floor(this.spawn.x);
+    const sz = Math.floor(this.spawn.z);
+    const ground = new Set<number>([B.GRASS, B.DIRT, B.SAND, B.SNOW, B.STONE, B.GRAVEL, B.SANDSTONE]);
+    let best: [number, number, number] | null = null;
+    for (let r = 0; r <= 12 && !best; r++) {
+      for (let dz = -r; dz <= r && !best; dz++) {
+        for (let dx = -r; dx <= r && !best; dx++) {
+          if (Math.max(Math.abs(dx), Math.abs(dz)) !== r) continue;
+          const x = sx + dx;
+          const z = sz + dz;
+          const top = this.world.topSolidY(x, z);
+          if (top > 0 && ground.has(this.world.getBlock(x, top, z))) best = [x, top + 1, z];
+        }
+      }
+    }
+    const [x, y, z] = best ?? [sx, this.world.topSolidY(sx, sz) + 1, sz];
+    this.spawn.set(x + 0.5, y, z + 0.5);
+    this.player.setPosition(x + 0.5, y, z + 0.5);
+    this.needsSpawnPlacement = false;
+  }
+
+  private blockOverlapsPlayer(x: number, y: number, z: number): boolean {
+    const b = this.player.body;
+    return (
+      x + 1 > b.pos.x - b.halfWidth && x < b.pos.x + b.halfWidth &&
+      y + 1 > b.pos.y && y < b.pos.y + b.height &&
+      z + 1 > b.pos.z - b.halfWidth && z < b.pos.z + b.halfWidth
+    );
+  }
+
+  private useItem(id: number): boolean {
+    const def = itemDef(id);
+    if (def?.kind === 'food' && def.heal) {
+      if (this.player.health >= this.player.maxHealth) {
+        this.toasts.show('Already at full health.');
+        return false;
+      }
+      this.player.heal(this.player.maxHealth * def.heal);
+      this.inventory.consumeSelected();
+      this.toasts.show(`Ate ${def.name}`);
+      return true;
+    }
+    return false;
+  }
+
+  damagePlayer(amount: number, _source: string): void {
+    const p = this.player;
+    if (p.dead || amount <= 0) return;
+    p.health -= amount;
+    p.sinceDamage = 0;
+    this.flashVignette();
+    if (p.health <= 0) {
+      p.health = 0;
+      this.die();
+    }
+  }
+
+  private flashVignette(): void {
+    this.vignette.style.opacity = '1';
+    setTimeout(() => (this.vignette.style.opacity = '0'), 140);
+  }
+
+  private die(): void {
+    this.player.dead = true;
+    this.state = 'dead';
+    this.suppressUnlockPause = true;
+    this.input.exitLock();
+    this.deathEl.classList.remove('hidden');
+  }
+
+  private respawn(): void {
+    const p = this.player;
+    p.dead = false;
+    p.health = p.maxHealth;
+    p.setPosition(this.spawn.x, this.spawn.y, this.spawn.z);
+    this.deathEl.classList.add('hidden');
+    this.state = 'loading';
+    this.needsSpawnPlacement = true;
+  }
+
+  private dropSelected(): void {
+    const s = this.inventory.selectedStack;
+    if (!s || this.inventory.locked.has(this.inventory.selected)) return;
+    const id = s.id;
+    this.inventory.consumeSelected();
+    this.dropStack(id, 1);
+  }
+
+  private dropStack(id: number, count: number): void {
+    const p = this.player.position;
+    const f = this.rig.forward;
+    const vel = new THREE.Vector3(f.x * 5, 2.5, f.z * 5);
+    this.drops.spawn(id, count, p.x + f.x * 0.6, p.y + 1.3, p.z + f.z * 0.6, vel, 1.5);
+  }
+
+  private openInventory(table: boolean): void {
+    if (this.state !== 'playing') return;
+    this.state = 'inventory';
+    this.suppressUnlockPause = true;
+    this.input.exitLock();
+    this.inventoryScreen.show(table || this.nearCraftingTable());
+  }
+
+  private closeInventory(fromKey: boolean): void {
+    if (this.state !== 'inventory') return;
+    if (fromKey) {
+      this.inventoryScreen.hide();
+      return;
+    }
+    this.state = 'playing';
+    this.input.requestLock();
+  }
+
+  private nearCraftingTable(): boolean {
+    const p = this.player.position;
+    const r = 4;
+    for (let y = Math.floor(p.y) - 2; y <= Math.floor(p.y) + 3; y++) {
+      for (let z = Math.floor(p.z) - r; z <= Math.floor(p.z) + r; z++) {
+        for (let x = Math.floor(p.x) - r; x <= Math.floor(p.x) + r; x++) {
+          if (this.world.getBlock(x, y, z) === B.CRAFTING_TABLE) return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  pause(): void {
+    if (this.state !== 'playing') return;
+    this.state = 'paused';
+    this.pausedAt = this.time;
+    this.suppressUnlockPause = true;
+    this.input.exitLock();
+    this.pauseMenu.show();
+    void this.save();
+  }
+
+  resume(): void {
+    if (this.state !== 'paused') return;
+    this.pauseMenu.hide();
+    this.state = 'playing';
+    this.input.requestLock();
+  }
+
+  private async quitToTitle(): Promise<void> {
+    await this.save();
+    this.dispose();
+    this.onQuit();
+  }
+
+  private applySettings(s: Settings['data']): void {
+    this.rig.setFov(s.fov);
+    this.world.setRenderDistance(s.renderDistance);
+    this.debug.setFpsVisible(s.showFps);
+  }
+
+  private readonly onResize = () => {
+    const w = this.container.clientWidth;
+    const h = this.container.clientHeight;
+    this.renderer.setSize(w, h);
+    this.rig.setAspect(w / h);
+  };
+
+  private readonly onVisibility = () => {
+    if (document.visibilityState === 'hidden') {
+      if (this.state === 'playing') this.pause();
+      else void this.save();
+    }
+  };
+
+  private updateDebugText(): void {
+    const p = this.player.position;
+    const ws = this.world.stats();
+    const info = this.world.generator.column(Math.floor(p.x), Math.floor(p.z));
+    const light = this.world.getLight(Math.floor(p.x), Math.floor(p.y + 0.5), Math.floor(p.z));
+    const ri = this.renderer.info;
+    const t = this.interaction.target;
+    this.debug.setText(
+      [
+        `Hsin Voxel  ${Math.round(this.debug.fps)} fps  cpu ${this.debug.cpuMs.toFixed(1)} ms`,
+        `XYZ ${p.x.toFixed(2)} / ${p.y.toFixed(2)} / ${p.z.toFixed(2)}`,
+        `Chunk ${Math.floor(p.x) >> 4}, ${Math.floor(p.z) >> 4}   Biome ${BIOME_NAMES[info.biome]}`,
+        `Light sky ${light.sky} block ${light.block}   Time ${this.sky.clockText()}`,
+        `Chunks ${ws.meshed}/${ws.loaded} (pending ${ws.pending})   Tris ${(ws.triangles / 1000).toFixed(0)}k`,
+        `Draw calls ${ri.render.calls}   Geometries ${ri.memory.geometries}`,
+        `Particles ${this.particles.active}   Drops ${this.drops.count}`,
+        t ? `Target ${blockDef(t.id).name} @ ${t.x}, ${t.y}, ${t.z}` : 'Target -',
+        `Seed ${this.meta.seed}`,
+      ].join('\n'),
+    );
+  }
+
+  /** True when the block at a position is solid (used by tests). */
+  isSolidAt(x: number, y: number, z: number): boolean {
+    return IS_SOLID[this.world.getBlock(x, y, z)] === 1;
+  }
+
+  dispose(): void {
+    this.running = false;
+    cancelAnimationFrame(this.rafId);
+    window.removeEventListener('resize', this.onResize);
+    document.removeEventListener('visibilitychange', this.onVisibility);
+    this.input.exitLock();
+    this.world.dispose();
+    this.renderer.dispose();
+    this.container.innerHTML = '';
+  }
+}

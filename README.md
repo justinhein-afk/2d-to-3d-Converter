@@ -78,3 +78,9 @@ The back of the model is a mirror of the front, as the 2D drawing has no
 information about it. Best results come from simple, bold figures with a clear
 outline. Very thin lines turn into thin, fragile parts; raise Detail if they
 look broken.
+
+## Also in this repo: Hsin · Voxel
+
+[`hsin-voxel/`](hsin-voxel/) is a separate project: a Minecraft-style voxel sandbox in the browser
+(TypeScript + Three.js + Vite) with a third-person voxel Hsin from *Wuthering Waves*. See
+[`hsin-voxel/README.md`](hsin-voxel/README.md) for how to run it.
