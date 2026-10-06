@@ -118,7 +118,7 @@ export class CameraRig {
       const hit = raycastVoxels(get, sx, sy, sz, back.x, back.y, back.z, this.zoom + pad, solid);
       if (hit) allowed = Math.min(allowed, hit.dist - pad);
     }
-    allowed = Math.max(0.35, allowed);
+    allowed = Math.max(0.05, allowed);
     if (allowed < this.distance) this.distance = allowed;
     else this.distance = damp(this.distance, allowed, 5, dt);
     cam.position.copy(this.pivot).addScaledVector(back, this.distance);

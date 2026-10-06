@@ -98,6 +98,7 @@ try {
 
   await page.evaluate(() => {
     const g = window.game;
+    g.rig.mode = 'first'; // the Phase 1 checks aim from the eyes
     g.rig.pitch = -0.25;
     g.sky.time = 0.36;
   });
@@ -246,13 +247,105 @@ try {
   await page.evaluate(() => window.game.resume());
 
   if (phase !== '1') {
+    // Move to open ground away from the dug hole, then check the third-person character.
     await page.evaluate(() => {
       const g = window.game;
+      const p = g.player.position;
+      const x = Math.floor(p.x) + 6;
+      const z = Math.floor(p.z) + 2;
+      g.player.setPosition(x + 0.5, g.world.topSolidY(x, z) + 1, z + 0.5);
       g.sky.time = 0.33;
       g.rig.pitch = -0.2;
+      g.rig.mode = 'third';
     });
-    await step(3);
+    await step(10);
     await shot('06-third-person');
+    const vis = await page.evaluate(() => window.game.model.root.visible);
+    check('Hsin is visible in third person', vis);
+
+    // Double-tap W to sprint.
+    await page.evaluate(() => {
+      const g = window.game;
+      g.input.simulateKey('KeyW', true);
+    });
+    await step(1);
+    await page.evaluate(() => window.game.input.simulateKey('KeyW', false));
+    await step(2);
+    await page.evaluate(() => {
+      const g = window.game;
+      g.input.simulateKey('KeyW', true);
+      g.input.doubleTapForward = true; // what Input sets on a real double tap
+    });
+    await step(15);
+    const sprinting = await page.evaluate(() => window.game.player.sprinting);
+    await shot('07-sprint');
+    await page.evaluate(() => window.game.input.simulateKey('KeyW', false));
+    await step(10);
+    check('double-tap W sprints', sprinting);
+
+    // Dodge (on a flat platform so terrain can't block it).
+    await page.evaluate(() => {
+      const g = window.game;
+      const p = g.player.position;
+      const bx = Math.floor(p.x), bz = Math.floor(p.z), by = 100;
+      for (let dz = -7; dz <= 7; dz++) for (let dx = -7; dx <= 7; dx++) g.world.setBlock(bx + dx, by, bz + dz, 21);
+      g.player.setPosition(bx + 0.5, by + 1, bz + 0.5);
+    });
+    for (let i = 0; i < 15; i++) {
+      await step(1);
+      await page.waitForTimeout(40);
+    }
+    const before = await page.evaluate(() => ({ p: window.game.player.position.toArray(), st: window.game.player.stamina }));
+    await page.evaluate(() => window.game.input.simulateKey('ShiftLeft', true));
+    await step(1);
+    const inv = await page.evaluate(() => window.game.player.invulnerable);
+    await page.evaluate(() => window.game.input.simulateKey('ShiftLeft', false));
+    await step(14);
+    const after = await page.evaluate(() => ({ p: window.game.player.position.toArray(), st: window.game.player.stamina }));
+    const moved = Math.hypot(after.p[0] - before.p[0], after.p[2] - before.p[2]);
+    check('Shift dodges with invulnerability and stamina cost', inv && moved > 2 && after.st < before.st, `moved ${moved.toFixed(2)}, stamina ${before.st}->${after.st.toFixed(0)}, inv ${inv}`);
+
+    // Scroll zoom.
+    const z0 = await page.evaluate(() => window.game.rig.zoom);
+    await page.evaluate(() => (window.game.input.wheel = 3));
+    await step(1);
+    const z1 = await page.evaluate(() => window.game.rig.zoom);
+    check('mouse wheel zooms the camera', z1 > z0, `${z0} -> ${z1}`);
+
+    // Camera never ends up inside a solid block, even with walls behind the player.
+    const camOk = await page.evaluate(() => {
+      const g = window.game;
+      const p = g.player.position;
+      const bx = Math.floor(p.x), by = Math.floor(p.y), bz = Math.floor(p.z);
+      // Wall behind the camera direction.
+      const back = { x: Math.round(Math.sin(g.rig.yaw)), z: Math.round(Math.cos(g.rig.yaw)) };
+      for (let dy = 0; dy < 5; dy++) for (let s = -2; s <= 2; s++) {
+        const wx = bx + back.x * 2 + (back.z !== 0 ? s : 0);
+        const wz = bz + back.z * 2 + (back.x !== 0 ? s : 0);
+        g.world.setBlock(wx, by + dy, wz, 1);
+      }
+      return true;
+    });
+    for (let i = 0; i < 20; i++) {
+      await step(1);
+      await page.waitForTimeout(30);
+    }
+    const camInfo = await page.evaluate(() => {
+      const g = window.game;
+      const c = g.rig.camera.position;
+      return { solid: g.isSolidAt(Math.floor(c.x), Math.floor(c.y), Math.floor(c.z)), dist: g.rig.distance, zoom: g.rig.zoom };
+    });
+    check('camera collides with blocks instead of clipping', camOk && !camInfo.solid && camInfo.dist < camInfo.zoom, JSON.stringify(camInfo));
+    await shot('08-camera-wall');
+
+    // First-person toggle hides the model.
+    await page.evaluate(() => window.game.input.simulateKey('KeyV', true));
+    await step(1);
+    await page.evaluate(() => window.game.input.simulateKey('KeyV', false));
+    await step(1);
+    const fp = await page.evaluate(() => ({ mode: window.game.rig.mode, vis: window.game.model.root.visible }));
+    check('V toggles first person', fp.mode === 'first' && !fp.vis, JSON.stringify(fp));
+    await page.evaluate(() => (window.game.rig.mode = 'third'));
   }
 
   check('no console errors', errors.length === 0, errors.slice(0, 5).join(' | '));

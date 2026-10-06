@@ -47,8 +47,15 @@ export class Player {
   private fallStartY = 0;
   private wasOnGround = true;
   private jumpCooldown = 0;
-  /** External horizontal velocity (dodges, knockback) decaying over time. */
+  /** External horizontal velocity (knockback) decaying over time. */
   readonly impulse = new THREE.Vector3();
+  /** Dodge state. */
+  dodgeTimer = 0;
+  dodgeCooldown = 0;
+  invulnTimer = 0;
+  readonly dodgeDir = new THREE.Vector3();
+  /** Extra invulnerability sources (cutscenes, passives) by name. */
+  readonly invulnSources = new Set<string>();
 
   get position(): THREE.Vector3 {
     return this.body.pos;
@@ -77,12 +84,41 @@ export class Player {
     return true;
   }
 
+  get dodging(): boolean {
+    return this.dodgeTimer > 0;
+  }
+
+  /** Progress of the current dodge, 0..1 (0 when not dodging). */
+  get dodgeProgress(): number {
+    return this.dodgeTimer > 0 ? 1 - this.dodgeTimer / GAME.dodge.duration : 0;
+  }
+
+  get invulnerable(): boolean {
+    return this.invulnTimer > 0 || this.invulnSources.size > 0;
+  }
+
+  /** Starts a dodge along a horizontal direction. Returns false on cooldown or without stamina. */
+  tryDodge(dir: THREE.Vector3): boolean {
+    if (this.dodgeCooldown > 0 || this.dodgeTimer > 0 || this.movementLocked || this.dead) return false;
+    if (!this.useStamina(GAME.dodge.staminaCost)) return false;
+    this.dodgeDir.set(dir.x, 0, dir.z);
+    if (this.dodgeDir.lengthSq() < 1e-6) this.dodgeDir.set(Math.sin(this.yaw), 0, Math.cos(this.yaw));
+    this.dodgeDir.normalize();
+    this.dodgeTimer = GAME.dodge.duration;
+    this.invulnTimer = Math.max(this.invulnTimer, GAME.dodge.invulnerability);
+    this.dodgeCooldown = GAME.dodge.duration + GAME.dodge.cooldown;
+    if (!this.body.onGround) this.body.vel.y = Math.max(this.body.vel.y, -1);
+    return true;
+  }
+
   update(dt: number, intent: MoveIntent, world: World): void {
     const P = GAME.player;
     const b = this.body;
     this.jumpCooldown -= dt;
     this.sinceDamage += dt;
     this.staminaDelay -= dt;
+    this.dodgeCooldown -= dt;
+    this.invulnTimer -= dt;
 
     // Wish direction relative to the camera.
     let f = this.movementLocked ? 0 : intent.forward;
@@ -119,6 +155,20 @@ export class Player {
     const k = 1 - Math.exp(-accel * dt);
     b.vel.x += (tx - b.vel.x) * k;
     b.vel.z += (tz - b.vel.z) * k;
+    if (this.dodgeTimer > 0) {
+      // Dash with an ease-out speed curve; walking input is ignored meanwhile.
+      const D = GAME.dodge.duration;
+      const u = 1 - this.dodgeTimer / D;
+      const v = ((2.5 * GAME.dodge.distance) / D) * Math.pow(1 - u, 1.5);
+      b.vel.x = this.dodgeDir.x * v;
+      b.vel.z = this.dodgeDir.z * v;
+      this.dodgeTimer -= dt;
+      if (this.dodgeTimer <= 0) {
+        this.dodgeTimer = 0;
+        b.vel.x = this.dodgeDir.x * speed * 0.6;
+        b.vel.z = this.dodgeDir.z * speed * 0.6;
+      }
+    }
 
     // Gravity, buoyancy, jumping.
     if (b.inWater) {

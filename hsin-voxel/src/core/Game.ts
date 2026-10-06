@@ -7,7 +7,12 @@ import { Particles } from '../fx/Particles';
 import { Inventory } from '../items/Inventory';
 import { I, itemDef } from '../items/items';
 import { BlockInteraction } from '../player/BlockInteraction';
+import { HsinAnimator, type ActionState } from '../player/HsinAnimator';
+import { HsinModel } from '../player/HsinModel';
 import { Player } from '../player/Player';
+import { BlobShadow } from '../fx/BlobShadow';
+import { dampAngle, wrapAngle } from './math';
+import { sampleLightColor } from '../world/lightProbe';
 import { DebugOverlay } from '../ui/DebugOverlay';
 import { el } from '../ui/dom';
 import { Hotbar } from '../ui/Hotbar';
@@ -65,6 +70,14 @@ export class Game {
   readonly inventory = new Inventory();
   readonly interaction: BlockInteraction;
   readonly blockTexture: THREE.DataArrayTexture;
+  readonly model = new HsinModel();
+  readonly animator: HsinAnimator;
+  private readonly shadow: BlobShadow;
+  /** Current one-shot animation action (attack, cast, place, ...). */
+  private action: { kind: ActionState['kind']; time: number; duration: number; stage: number } | null = null;
+  /** Seconds the character keeps facing the camera after acting. */
+  private combatFacing = 0;
+  private readonly lightTint = new THREE.Color();
   state: GameState = 'loading';
   time = 0;
   private spawn = new THREE.Vector3();
@@ -107,7 +120,7 @@ export class Game {
     this.renderer.domElement.tabIndex = 0;
 
     this.rig = new CameraRig(container.clientWidth / container.clientHeight);
-    this.rig.mode = 'first';
+    this.rig.mode = 'third';
     this.rig.setFov(settings.data.fov);
     this.input = new Input(this.renderer.domElement);
     this.input.doubleTapWindow = GAME.player.doubleTapWindow;
@@ -120,6 +133,9 @@ export class Game {
     this.particles = new Particles(this.scene);
     this.drops = new ItemDrops(this.scene, this.world, this.blockTexture);
     this.interaction = new BlockInteraction(this.scene, this.blockTexture);
+    this.scene.add(this.model.root);
+    this.animator = new HsinAnimator(this.model);
+    this.shadow = new BlobShadow(this.scene, 0.45);
 
     // ---- UI ----
     this.hud = el('div', 'layer', container);
@@ -311,12 +327,14 @@ export class Game {
       if (input.doubleTapForward) p.sprinting = true;
       const sprint = input.action('sprint') || (p.sprinting && fwd > 0);
       p.autoJump = this.settings.data.autoJump;
+      if (playing && input.actionPressed('dodge')) this.tryDodge(fwd, str);
       p.update(dt, { forward: playing ? fwd : 0, strafe: playing ? str : 0, jumpHeld: input.action('jump'), sprint, cameraYaw: this.rig.yaw }, this.world);
-      if (p.speed > 0.5) p.yaw = this.rig.yaw;
+      this.updateFacing(dt);
     }
 
     this.rig.update(dt, p.position, GAME.player.eyeHeight, this.world);
     const cam = this.rig.camera;
+    this.updateCharacter(dt);
 
     // Block targeting / mining / placing.
     if (playing) {
@@ -336,7 +354,7 @@ export class Game {
           this.particles.blockBreak(x, y, z, blockDef(id).color);
           if (drop) this.drops.spawn(drop[0], drop[1], x + 0.5, y + 0.3, z + 0.5);
         },
-        onPlace: () => {},
+        onPlace: () => this.playAction('place', 0.3),
         onUseItem: (id) => this.useItem(id),
         onInteractBlock: (_x, _y, _z, id) => {
           if (id === B.CRAFTING_TABLE) {
@@ -345,7 +363,9 @@ export class Game {
           }
           return false;
         },
-        onMiningTick: () => {},
+        onMiningTick: () => {
+          if (!this.action || this.action.kind === 'mine') this.playAction('mine', 0.4);
+        },
       });
     } else {
       this.interaction.hide();
@@ -382,6 +402,97 @@ export class Game {
         void this.save();
       }
     }
+  }
+
+  playAction(kind: ActionState['kind'], duration: number, stage = 0): void {
+    this.action = { kind, time: 0, duration, stage };
+    if (kind !== 'hurt' && kind !== 'eat') this.combatFacing = Math.max(this.combatFacing, duration + 0.3);
+  }
+
+  private currentAction(): ActionState | null {
+    const a = this.action;
+    if (!a) return null;
+    const t = Math.min(1, a.time / a.duration);
+    switch (a.kind) {
+      case 'attack':
+        return { kind: 'attack', stage: a.stage, t };
+      case 'charge':
+        return { kind: 'charge', amount: t };
+      default:
+        return { kind: a.kind, t } as ActionState;
+    }
+  }
+
+  private tryDodge(fwd: number, str: number): void {
+    const p = this.player;
+    const dir = new THREE.Vector3();
+    if (fwd !== 0 || str !== 0) {
+      const sin = Math.sin(this.rig.yaw);
+      const cos = Math.cos(this.rig.yaw);
+      dir.set(-sin * fwd + cos * str, 0, -cos * fwd - sin * str);
+    } else {
+      // No direction held: hop backward, away from where she faces.
+      dir.set(Math.sin(p.yaw), 0, Math.cos(p.yaw));
+    }
+    if (p.tryDodge(dir)) {
+      this.action = null;
+    }
+  }
+
+  /** Turns the character toward movement, or toward the crosshair while acting. */
+  private updateFacing(dt: number): void {
+    const p = this.player;
+    this.combatFacing = Math.max(0, this.combatFacing - dt);
+    let target = p.yaw;
+    if (p.dodging) {
+      // Face the dash direction unless dashing backward.
+      const back = p.dodgeDir.x * Math.sin(p.yaw) + p.dodgeDir.z * Math.cos(p.yaw) > 0.7;
+      if (!back) target = Math.atan2(-p.dodgeDir.x, -p.dodgeDir.z);
+    } else if (this.combatFacing > 0 || this.rig.mode === 'first') {
+      target = this.rig.yaw;
+    } else if (p.moveDir.lengthSq() > 0.01 && p.speed > 0.3) {
+      target = Math.atan2(-p.moveDir.x, -p.moveDir.z);
+    }
+    p.yaw = wrapAngle(dampAngle(p.yaw, target, this.combatFacing > 0 ? 22 : 12, dt));
+  }
+
+  private updateCharacter(dt: number): void {
+    const p = this.player;
+    const m = this.model;
+    if (this.action) {
+      this.action.time += dt;
+      if (this.action.time >= this.action.duration) this.action = null;
+    }
+    m.root.position.copy(p.position);
+    m.root.rotation.y = p.yaw + Math.PI;
+    // Dodge direction relative to the body.
+    const fx = -Math.sin(p.yaw);
+    const fz = -Math.cos(p.yaw);
+    const rx = Math.cos(p.yaw);
+    const rz = -Math.sin(p.yaw);
+    this.animator.update(dt, {
+      speed: p.speed,
+      walkSpeed: GAME.player.walkSpeed,
+      sprinting: p.sprinting,
+      onGround: p.onGround,
+      vy: p.body.vel.y,
+      inWater: p.inWater,
+      headInWater: p.body.headInWater,
+      dodge: p.dodgeProgress,
+      dodgeX: p.dodgeDir.x * rx + p.dodgeDir.z * rz,
+      dodgeZ: p.dodgeDir.x * fx + p.dodgeDir.z * fz,
+      action: this.currentAction(),
+      lookPitch: this.rig.pitch,
+      lookYaw: wrapAngle(this.rig.yaw - p.yaw),
+      pose: null,
+      poseT: 0,
+    });
+    m.update(dt);
+    sampleLightColor(this.world, p.position.x, p.position.y + 1.2, p.position.z, this.lightTint);
+    m.setLight(this.lightTint);
+    const visible = this.rig.mode === 'third' && this.rig.distance > 0.7;
+    m.setVisible(visible);
+    this.shadow.update(this.world, p.position.x, p.position.y, p.position.z, 1, visible ? 1 : 0);
   }
 
   /** Puts the player on open ground near the spawn column (not on top of a tree). */
@@ -425,18 +536,22 @@ export class Game {
       }
       this.player.heal(this.player.maxHealth * def.heal);
       this.inventory.consumeSelected();
+      this.playAction('eat', 0.6);
       this.toasts.show(`Ate ${def.name}`);
       return true;
     }
     return false;
   }
 
-  damagePlayer(amount: number, _source: string): void {
+  damagePlayer(amount: number, source: string): void {
     const p = this.player;
     if (p.dead || amount <= 0) return;
+    if (source !== 'fall' && p.invulnerable) return;
     p.health -= amount;
     p.sinceDamage = 0;
     this.flashVignette();
+    this.model.hitFlash();
+    if (!this.action || this.action.kind === 'mine') this.playAction('hurt', 0.35);
     if (p.health <= 0) {
       p.health = 0;
       this.die();

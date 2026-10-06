@@ -32,10 +32,12 @@ Click the game to capture the mouse; press **Esc** to pause.
 
 | Input | Action |
 |---|---|
-| W A S D | Move |
+| W A S D | Move (Hsin turns to face where she runs) |
 | Double-tap W / Left Ctrl | Sprint |
 | Space | Jump / swim up |
-| Mouse | Look around |
+| Shift | Dodge: a quick dash with a short invulnerability window (costs stamina) |
+| Mouse | Orbit the over-the-shoulder camera |
+| Mouse wheel | Zoom the camera in and out |
 | Left click (hold) | Break the targeted block |
 | Right click | Place the held block, eat food, open a Crafting Table |
 | Middle click | Pick the targeted block into your hand |
@@ -65,19 +67,39 @@ Click the game to capture the mouse; press **Esc** to pause.
 * **Saving**: worlds, edited chunks (run-length encoded), player position, inventory and time of
   day are stored in IndexedDB. The game autosaves and also saves when you pause or leave the tab.
 
+## Hsin
+
+Hsin is built from boxes in Minecraft proportions (8-pixel head, 12-pixel body and legs,
+slim arms), with a pixel skin painted in code: long white hair past the waist, white fox ears
+with dark tips, red eyes with a golden glint, a deep red dress with a high black collar, gold
+sash and teal gem, wide sleeves, a front panel, black stockings and boots, and a big white
+three-segment tail with a dark tip. Her Rectifier (a gold moon ring with an Electro core)
+floats beside her and moves to her hands when she attacks.
+
+Her colours live in [`src/config/appearance.ts`](src/config/appearance.ts); change them and the
+skin is repainted.
+
+Animations are procedural and blend into each other: idle (breathing, tail and ear twitches),
+walk, sprint, jump, fall, swim, dodge, a four-stage attack combo, heavy-attack charge, casting,
+summoning, mining and getting hurt.
+
+The camera orbits over her right shoulder, zooms with the mouse wheel and is pulled in front
+of any block that would come between it and her, so it never clips into terrain. Blocks are
+targeted with a ray from the crosshair, limited to her reach.
+
 ## Project layout
 
 ```
 src/
-  config/     game.ts (movement, world, camera tuning), keybinds.ts
+  config/     game.ts (movement, world, camera tuning), appearance.ts (Hsin's colours), keybinds.ts
   core/       Game loop, input, settings, math helpers
   world/      blocks, procedural textures, noise, terrain, lighting, mesher, workers,
               chunk streaming (World.ts), sky, physics, raycasting, IndexedDB storage
   items/      item registry, inventory, crafting recipes
-  player/     player movement physics, block mining/placing
+  player/     Hsin's model and animator, movement physics, block mining/placing
   camera/     first/third-person camera rig with block collision
-  entities/   dropped items
-  fx/         particles
+  entities/   box-model toolkit (skins + entity shader), dropped items
+  fx/         particles, blob shadows
   ui/         hotbar, vitals, inventory, title screen, pause menu, debug overlay, icons
 tests/        Vitest unit tests
 scripts/      headless smoke test
