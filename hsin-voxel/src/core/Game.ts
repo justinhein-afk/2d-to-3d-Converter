@@ -11,6 +11,17 @@ import { HsinAnimator, type ActionState } from '../player/HsinAnimator';
 import { HsinModel } from '../player/HsinModel';
 import { Player } from '../player/Player';
 import { BlobShadow } from '../fx/BlobShadow';
+import { ScreenShake } from '../fx/ScreenShake';
+import { Telegraphs } from '../fx/Telegraphs';
+import { CombatSystem } from '../combat/CombatSystem';
+import { Projectiles } from '../combat/Projectiles';
+import type { DamageInfo } from '../combat/types';
+import { targetCenter } from '../combat/types';
+import { MobManager } from '../entities/mobs/MobManager';
+import type { Mob, MobContext } from '../entities/mobs/Mob';
+import { SPAWNING } from '../config/mobs';
+import { BossBar } from '../ui/BossBar';
+import { WorldOverlay, type NumberStyle } from '../ui/WorldOverlay';
 import { dampAngle, wrapAngle } from './math';
 import { sampleLightColor } from '../world/lightProbe';
 import { DebugOverlay } from '../ui/DebugOverlay';
@@ -71,6 +82,14 @@ export class Game {
   readonly interaction: BlockInteraction;
   readonly blockTexture: THREE.DataArrayTexture;
   readonly model = new HsinModel();
+  readonly combat = new CombatSystem();
+  readonly projectiles: Projectiles;
+  readonly mobs: MobManager;
+  readonly telegraphs: Telegraphs;
+  readonly shake = new ScreenShake();
+  private punchCooldown = 0;
+  private readonly prevPlayerPos = new THREE.Vector3();
+  private readonly playerVel = new THREE.Vector3();
   readonly animator: HsinAnimator;
   private readonly shadow: BlobShadow;
   /** Current one-shot animation action (attack, cast, place, ...). */
@@ -103,6 +122,8 @@ export class Game {
   private readonly deathEl: HTMLDivElement;
   private readonly underwaterEl: HTMLDivElement;
   private readonly vignette: HTMLDivElement;
+  readonly overlay: WorldOverlay;
+  private readonly bossBar: BossBar;
 
   private constructor(
     private readonly container: HTMLElement,
@@ -136,6 +157,24 @@ export class Game {
     this.scene.add(this.model.root);
     this.animator = new HsinAnimator(this.model);
     this.shadow = new BlobShadow(this.scene, 0.45);
+    this.projectiles = new Projectiles(this.scene, this.world, this.combat, this.particles);
+    this.mobs = new MobManager(this.scene, this.world, this.combat, this.drops, this.particles);
+    this.telegraphs = new Telegraphs(this.scene);
+    this.projectiles.playerBox = () => {
+      const b = this.player.body;
+      return new THREE.Box3(
+        new THREE.Vector3(b.pos.x - b.halfWidth, b.pos.y, b.pos.z - b.halfWidth),
+        new THREE.Vector3(b.pos.x + b.halfWidth, b.pos.y + b.height, b.pos.z + b.halfWidth),
+      );
+    };
+    this.projectiles.hitPlayer = (spec, point) =>
+      spec.damage ? this.hitPlayer({ ...spec.damage, source: point.clone().sub(spec.vel.clone().normalize()) }) : false;
+    this.combat.onHit = (target, info, dealt) => {
+      const c = targetCenter(target, new THREE.Vector3());
+      c.y += target.hitHeight * 0.3;
+      const style: NumberStyle = info.kind === 'liberation' ? 'big' : info.crit ? 'crit' : info.element === 'electro' ? 'electro' : 'normal';
+      this.overlay.addNumber(c, dealt, style);
+    };
 
     // ---- UI ----
     this.hud = el('div', 'layer', container);
@@ -145,6 +184,8 @@ export class Game {
     this.vitals = new Vitals(this.hud);
     this.hotbar = new Hotbar(this.hud, this.inventory);
     this.toasts = new Toasts(this.hud);
+    this.overlay = new WorldOverlay(this.hud);
+    this.bossBar = new BossBar(this.hud);
     this.debug = new DebugOverlay(this.hud);
     this.debug.setFpsVisible(settings.data.showFps);
     this.clickHint = el('div', 'click-to-play hidden', this.hud, 'Click to capture the mouse');
@@ -336,9 +377,12 @@ export class Game {
     const cam = this.rig.camera;
     this.updateCharacter(dt);
 
-    // Block targeting / mining / placing.
+    // Block targeting / mining / placing (or punching a mob under the crosshair).
+    this.punchCooldown -= dt;
     if (playing) {
       const eye = new THREE.Vector3(p.position.x, p.position.y + GAME.player.eyeHeight, p.position.z);
+      const punched = input.mouseClicked(0) && this.tryPunch(eye);
+      this.interaction.enabled = !punched;
       this.interaction.update(dt, {
         world: this.world,
         inventory: this.inventory,
@@ -371,10 +415,14 @@ export class Game {
       this.interaction.hide();
     }
 
+    const simulate = this.state !== 'paused' && this.state !== 'loading';
+    this.drops.freeze = !simulate;
     this.drops.update(dt, p.position, (id, count) => {
       const left = this.inventory.add(id, count);
       return count - left;
     });
+    this.updateEnemies(dt, simulate);
+    this.particles.freeze = !simulate;
     this.particles.update(dt);
     this.particles.setViewport(this.renderer.domElement.height, cam.fov);
 
@@ -387,6 +435,12 @@ export class Game {
     env.uPlayerLightPos.value.set(p.position.x, p.position.y + 1.4, p.position.z);
     cam.far = Math.max(this.world.renderDistance * 16 * 1.6, 420);
     cam.updateProjectionMatrix();
+    this.shake.strength = this.settings.data.cameraShake;
+    this.shake.update(dt, this.rig);
+    this.overlay.update(dt, cam, this.mobs.mobs, (m) => this.mobs.occluded(m as Mob, cam.position, this.time));
+    const elite = this.mobs.engagedElite(p.position);
+    if (elite) this.bossBar.show(elite.def.name, elite.def.level, elite.health, elite.def.maxHealth, dt);
+    else this.bossBar.hide();
 
     // HUD.
     this.hotbar.update(dt);
@@ -402,6 +456,74 @@ export class Game {
         void this.save();
       }
     }
+  }
+
+  /** An enemy attack reaches Hsin. Returns false if she avoided it (dodge invulnerability). */
+  hitPlayer(info: DamageInfo): boolean {
+    const p = this.player;
+    if (p.dead || p.invulnerable) return false;
+    this.damagePlayer(info.amount, 'enemy');
+    if (info.knockback > 0) {
+      const dir = new THREE.Vector3(p.position.x - info.source.x, 0, p.position.z - info.source.z);
+      if (dir.lengthSq() < 1e-4) dir.set(0, 0, 1);
+      dir.normalize().multiplyScalar(info.knockback);
+      p.impulse.add(dir);
+      if (p.onGround) p.body.vel.y = Math.max(p.body.vel.y, Math.min(7, info.knockback * 0.5));
+    }
+    this.shake.add(Math.min(0.6, 0.15 + info.knockback * 0.03));
+    const c = p.position.clone();
+    c.y += 1.9;
+    this.overlay.addNumber(c, info.amount, 'player');
+    return true;
+  }
+
+  private updateEnemies(dt: number, simulate: boolean): void {
+    const p = this.player;
+    if (dt > 0) this.playerVel.copy(p.position).sub(this.prevPlayerPos).divideScalar(dt);
+    this.prevPlayerPos.copy(p.position);
+    const ctx: MobContext = {
+      world: this.world,
+      playerPos: p.position,
+      playerVel: this.playerVel,
+      playerAlive: !p.dead && this.state !== 'loading',
+      projectiles: this.projectiles,
+      particles: this.particles,
+      hitPlayer: (info) => this.hitPlayer(info),
+      telegraph: (x, y, z, r, t) => this.telegraphs.draw(x, y, z, r, t),
+      shake: (a) => this.shake.add(a),
+      sound: () => {},
+      daylight: this.sky.daylight,
+    };
+    this.mobs.freeze = !simulate;
+    this.mobs.update(dt, ctx, this.sky.isNight);
+    this.projectiles.freeze = !simulate;
+    this.projectiles.update(dt);
+    this.telegraphs.endFrame();
+  }
+
+  /** Minecraft-style punch when a mob is under the crosshair and closer than any block. */
+  private tryPunch(eye: THREE.Vector3): boolean {
+    if (this.punchCooldown > 0) return false;
+    const cam = this.rig.camera.position;
+    const dir = this.rig.forward;
+    const along = Math.max(0, eye.clone().sub(cam).dot(dir));
+    let hit = this.combat.raycast(cam, dir, along + GAME.player.reach, 'enemy') ?? this.combat.raycast(cam, dir, along + GAME.player.reach, 'neutral');
+    if (hit && hit.dist < along - 0.5) hit = null;
+    const block = this.interaction.findTarget({ world: this.world, rayOrigin: cam, rayDir: dir, reachFrom: eye });
+    if (!hit) {
+      // Over-the-shoulder aim misses close targets slightly; assist within a small cone from her eyes.
+      const reach = 3.2;
+      const t = this.combat.aimAssist(eye, dir, reach, Math.cos(0.45), 'enemy') ?? this.combat.aimAssist(eye, dir, reach, Math.cos(0.45), 'neutral');
+      if (!t) return false;
+      const d = targetCenter(t, new THREE.Vector3()).distanceTo(cam);
+      hit = { target: t, dist: d };
+      if (block && block.dist < d - 1) return false;
+    } else if (block && block.dist < hit.dist) return false;
+    this.punchCooldown = 0.45;
+    this.playAction('place', 0.3);
+    const amount = SPAWNING.punchDamage * (0.9 + Math.random() * 0.2);
+    this.combat.hit(hit.target, { amount, element: 'physical', kind: 'punch', source: this.player.position.clone(), knockback: SPAWNING.punchKnockback });
+    return true;
   }
 
   playAction(kind: ActionState['kind'], duration: number, stage = 0): void {
@@ -685,7 +807,7 @@ export class Game {
         `Light sky ${light.sky} block ${light.block}   Time ${this.sky.clockText()}`,
         `Chunks ${ws.meshed}/${ws.loaded} (pending ${ws.pending})   Tris ${(ws.triangles / 1000).toFixed(0)}k`,
         `Draw calls ${ri.render.calls}   Geometries ${ri.memory.geometries}`,
-        `Particles ${this.particles.active}   Drops ${this.drops.count}`,
+        `Particles ${this.particles.active}   Drops ${this.drops.count}   Mobs ${this.mobs.mobs.length} (hostile ${this.mobs.hostileCount})   Shots ${this.projectiles.count}`,
         t ? `Target ${blockDef(t.id).name} @ ${t.x}, ${t.y}, ${t.z}` : 'Target -',
         `Seed ${this.meta.seed}`,
       ].join('\n'),

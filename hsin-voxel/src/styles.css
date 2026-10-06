@@ -617,3 +617,113 @@ input[type='text'] {
   opacity: 0;
   transition: opacity 0.12s;
 }
+
+/* ---------- Enemy health bars and damage numbers ---------- */
+.world-overlay {
+  overflow: hidden;
+}
+.hpbar {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 74px;
+  height: 7px;
+  background: rgba(0, 0, 0, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: 4px;
+  overflow: hidden;
+  transform-origin: 50% 100%;
+}
+.hpbar .fill,
+.hpbar .lag {
+  position: absolute;
+  inset: 0;
+  transform-origin: left center;
+}
+.hpbar .fill {
+  background: linear-gradient(90deg, #9be37a, #5fc45a);
+}
+.hpbar.hostile .fill {
+  background: linear-gradient(90deg, #ff5a6a, #d8303e);
+}
+.hpbar .lag {
+  background: rgba(255, 230, 180, 0.75);
+}
+.dmg {
+  position: absolute;
+  left: 0;
+  top: 0;
+  font-weight: 800;
+  font-size: 22px;
+  letter-spacing: 0.02em;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  color: #ffffff;
+  text-shadow: 0 0 3px #000, 0 2px 2px rgba(0, 0, 0, 0.8);
+  will-change: transform, opacity;
+}
+.dmg-crit {
+  color: #ffd75e;
+  font-size: 28px;
+}
+.dmg-electro {
+  color: #d9a8ff;
+  text-shadow: 0 0 6px rgba(160, 80, 255, 0.9), 0 2px 2px rgba(0, 0, 0, 0.9);
+}
+.dmg-big {
+  color: #f4e6ff;
+  font-size: 34px;
+  text-shadow: 0 0 10px rgba(180, 108, 255, 1), 0 0 3px #000;
+}
+.dmg-heal {
+  color: #7dffb0;
+}
+.dmg-player {
+  color: #ff6b78;
+  font-size: 18px;
+}
+
+/* ---------- Boss bar ---------- */
+.bossbar {
+  position: absolute;
+  left: 50%;
+  top: 22px;
+  transform: translateX(-50%);
+  width: min(560px, 80vw);
+}
+.boss-head {
+  display: flex;
+  justify-content: space-between;
+  font-size: 14px;
+  font-weight: 700;
+  text-shadow: 0 1px 3px #000;
+  margin-bottom: 4px;
+}
+.boss-name {
+  color: #ffd1d6;
+  letter-spacing: 0.05em;
+}
+.boss-num {
+  font-variant-numeric: tabular-nums;
+}
+.boss-track {
+  position: relative;
+  height: 12px;
+  background: rgba(0, 0, 0, 0.65);
+  border: 1px solid rgba(255, 120, 130, 0.6);
+  border-radius: 3px;
+  overflow: hidden;
+  box-shadow: 0 0 14px rgba(255, 60, 80, 0.35);
+}
+.boss-track .fill,
+.boss-track .lag {
+  position: absolute;
+  inset: 0;
+  transform-origin: left center;
+}
+.boss-track .fill {
+  background: linear-gradient(90deg, #ff4a5c, #c41e30);
+}
+.boss-track .lag {
+  background: rgba(255, 235, 200, 0.85);
+}

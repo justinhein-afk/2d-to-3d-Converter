@@ -87,20 +87,42 @@ The camera orbits over her right shoulder, zooms with the mouse wheel and is pul
 of any block that would come between it and her, so it never clips into terrain. Blocks are
 targeted with a ray from the crosshair, limited to her reach.
 
+## Enemies and animals
+
+| Mob | Type | Behaviour |
+|---|---|---|
+| **Discord Husk** | melee | Charges in with arms raised, telegraphs with a red flash, then swipes. |
+| **Hollow Archer** | ranged | Keeps 7–15 blocks away, strafes, and fires arcing Tacet arrows that lead your movement. |
+| **Iron Colossus** | elite | Huge and slow, shows a boss bar. Slams the ground after a red warning circle fills up, and rushes you from range. Shrugs off knockback. |
+| Boar, Sheep, Chicken | passive | Wander and graze; run away when hit. Drop meat, wool and feathers. |
+
+* Hostiles spawn **at night** on dark open ground and **in caves** at any time (anywhere the light is low).
+  In the morning, surface hostiles that aren't fighting fade away. Animals spawn in daylight on grass.
+* Enemies show **health bars** above their heads (hidden behind terrain), every hit pops a **floating
+  damage number** (purple for Electro, gold for crits, red for damage you take), hits cause
+  **knockback**, and defeated mobs dissolve and **drop loot**.
+* Without a weapon you can punch like in Minecraft (left click a mob). Hsin's real combat kit
+  arrives with her Rectifier.
+* All mob stats (health, damage, speed, ranges, spawn caps, drops) are in
+  [`src/config/mobs.ts`](src/config/mobs.ts).
+
 ## Project layout
 
 ```
 src/
-  config/     game.ts (movement, world, camera tuning), appearance.ts (Hsin's colours), keybinds.ts
+  config/     game.ts (movement, world, camera tuning), mobs.ts (enemy stats),
+              appearance.ts (Hsin's colours), keybinds.ts
   core/       Game loop, input, settings, math helpers
   world/      blocks, procedural textures, noise, terrain, lighting, mesher, workers,
               chunk streaming (World.ts), sky, physics, raycasting, IndexedDB storage
   items/      item registry, inventory, crafting recipes
   player/     Hsin's model and animator, movement physics, block mining/placing
   camera/     first/third-person camera rig with block collision
-  entities/   box-model toolkit (skins + entity shader), dropped items
-  fx/         particles, blob shadows
-  ui/         hotbar, vitals, inventory, title screen, pause menu, debug overlay, icons
+  entities/   box-model toolkit (skins + entity shader), dropped items, mobs (models, AI, spawning)
+  combat/     damage types, target registry and queries, projectiles
+  fx/         particles, blob shadows, screen shake, attack warning circles
+  ui/         hotbar, vitals, inventory, title screen, pause menu, debug overlay, icons,
+              enemy health bars, damage numbers, boss bar
 tests/        Vitest unit tests
 scripts/      headless smoke test
 ```

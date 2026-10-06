@@ -348,6 +348,135 @@ try {
     await page.evaluate(() => (window.game.rig.mode = 'third'));
   }
 
+  if (phase !== '1' && phase !== '2') {
+    // ---- Phase 3: enemies ----
+    const fr = (n) => page.evaluate((n) => { const g = window.game; for (let i = 0; i < n; i++) { g.__t += 33; g.frame(g.__t); } }, n);
+    // Night spawning on the surface / in caves.
+    const night = await page.evaluate(() => {
+      const g = window.game;
+      g.mobs.clear();
+      g.sky.time = 0.0;
+      g.frame((g.__t += 33));
+      for (let i = 0; i < 60 && g.mobs.hostileCount < 3; i++) g.mobs.trySpawn(g.player.position, true, 0);
+      return { hostile: g.mobs.hostileCount, kinds: g.mobs.mobs.map((m) => m.def.kind) };
+    });
+    check('hostile mobs spawn at night / in caves', night.hostile > 0, JSON.stringify(night));
+    const day = await page.evaluate(() => {
+      const g = window.game;
+      g.mobs.clear();
+      g.sky.time = 0.45;
+      g.frame((g.__t += 33));
+      for (let i = 0; i < 80 && !g.mobs.mobs.some((m) => !m.def.hostile); i++) g.mobs.trySpawn(g.player.position, false, 1);
+      // Daytime hostiles are only allowed where it is dark (caves).
+      return g.mobs.mobs.map((m) => {
+        const p = m.position;
+        const l = g.world.getLight(Math.floor(p.x), Math.floor(p.y), Math.floor(p.z));
+        return { kind: m.def.kind, hostile: m.def.hostile, sky: l.sky };
+      });
+    });
+    check(
+      'passive animals spawn in daylight; hostiles only in dark caves',
+      day.some((m) => !m.hostile) && day.every((m) => !m.hostile || m.sky <= 3),
+      day.map((m) => `${m.kind}${m.hostile ? `(sky ${m.sky})` : ''}`).join(','),
+    );
+
+    // Arena in the sky for deterministic fights.
+    await page.evaluate(() => {
+      const g = window.game;
+      g.mobs.clear();
+      g.mobs.spawning = false;
+      const p = g.player.position;
+      const bx = Math.floor(p.x), bz = Math.floor(p.z), by = 104;
+      for (let dz = -12; dz <= 12; dz++) for (let dx = -12; dx <= 12; dx++) g.world.setBlock(bx + dx, by, bz + dz, 21);
+      g.player.setPosition(bx + 0.5, by + 1, bz + 0.5);
+      g.player.health = g.player.maxHealth;
+      g.rig.yaw = 0; g.rig.pitch = -0.15; g.player.yaw = 0;
+    });
+    for (let i = 0; i < 15; i++) {
+      await step(1);
+      await page.waitForTimeout(40);
+    }
+    // Melee husk walks up and hits.
+    const melee = await page.evaluate(() => {
+      const g = window.game;
+      const p = g.player.position;
+      g.__husk = g.mobs.spawn('husk', p.x, p.y, p.z - 6);
+      const hp = g.player.health;
+      for (let i = 0; i < 150 && g.player.health === hp; i++) g.frame((g.__t += 33));
+      return { before: hp, after: g.player.health, state: g.__husk.state };
+    });
+    check('melee enemy chases and hits Hsin', melee.after < melee.before, JSON.stringify(melee));
+    await shot('09-melee');
+
+    // Punch it (LMB with a block in hand) while it's in front of the camera.
+    const punch = await page.evaluate(() => {
+      const g = window.game;
+      const p = g.player.position;
+      const h = g.__husk;
+      h.body.pos.set(p.x, p.y, p.z - 1.6);
+      h.body.vel.set(0, 0, 0);
+      g.rig.yaw = 0; g.rig.pitch = -0.1; g.player.yaw = 0;
+      g.frame((g.__t += 33));
+      const hp = h.health;
+      g.input.simulateMouse(0, true);
+      g.frame((g.__t += 33));
+      g.input.simulateMouse(0, false);
+      g.frame((g.__t += 33));
+      return { before: hp, after: h.health };
+    });
+    check('left click punches a mob under the crosshair', punch.after < punch.before, JSON.stringify(punch));
+
+    // Kill it (it dissolves), and kill a boar far away (boars always drop meat).
+    const kill = await page.evaluate(() => {
+      const g = window.game;
+      const h = g.__husk;
+      const p = g.player.position;
+      const boar = g.mobs.spawn('boar', p.x + 8, p.y, p.z + 8);
+      const dropsBefore = g.drops.count;
+      g.combat.hit(h, { amount: 1e6, element: 'physical', kind: 'punch', source: p.clone(), knockback: 0 });
+      g.combat.hit(boar, { amount: 1e6, element: 'physical', kind: 'punch', source: p.clone(), knockback: 0 });
+      for (let i = 0; i < 40; i++) g.frame((g.__t += 33));
+      return { dead: !h.alive, removed: !g.mobs.mobs.includes(h) && !g.mobs.mobs.includes(boar), drops: g.drops.count - dropsBefore };
+    });
+    check('defeated enemies dissolve and drop loot', kill.dead && kill.removed && kill.drops > 0, JSON.stringify(kill));
+
+    // Archer shoots.
+    const archer = await page.evaluate(() => {
+      const g = window.game;
+      const p = g.player.position;
+      const a = g.mobs.spawn('archer', p.x + 2, p.y, p.z - 10);
+      let shots = 0;
+      for (let i = 0; i < 150; i++) {
+        g.frame((g.__t += 33));
+        shots = Math.max(shots, g.projectiles.count);
+        if (shots > 0) break;
+      }
+      return { shots, state: a.state };
+    });
+    check('ranged enemy fires projectiles', archer.shots > 0, JSON.stringify(archer));
+    await fr(8);
+    await shot('10-archer');
+
+    // Elite brings up the boss bar and telegraphs its slam.
+    const elite = await page.evaluate(() => {
+      const g = window.game;
+      g.mobs.clear();
+      g.projectiles.clear();
+      const p = g.player.position;
+      const c = g.mobs.spawn('colossus', p.x, p.y, p.z - 5);
+      let windup = false;
+      for (let i = 0; i < 120 && !windup; i++) {
+        g.frame((g.__t += 33));
+        windup = c.state === 'windup' && c.stateTime > 0.5;
+      }
+      const bar = !document.querySelector('.bossbar').classList.contains('hidden');
+      return { windup, bar, state: c.state };
+    });
+    check('elite shows a boss bar and telegraphs attacks', elite.bar && elite.windup, JSON.stringify(elite));
+    await shot('11-elite');
+    await page.evaluate(() => window.game.mobs.clear());
+  }
+
   check('no console errors', errors.length === 0, errors.slice(0, 5).join(' | '));
 } catch (err) {
   console.error(err);
