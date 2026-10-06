@@ -22,6 +22,10 @@ import type { Mob, MobContext } from '../entities/mobs/Mob';
 import { SPAWNING } from '../config/mobs';
 import { BossBar } from '../ui/BossBar';
 import { WorldOverlay, type NumberStyle } from '../ui/WorldOverlay';
+import { CombatHud } from '../ui/CombatHud';
+import { HsinCombat } from '../abilities/HsinCombat';
+import type { KitSave } from '../abilities/HsinKit';
+import { Lightning } from '../fx/Lightning';
 import { dampAngle, wrapAngle } from './math';
 import { sampleLightColor } from '../world/lightProbe';
 import { DebugOverlay } from '../ui/DebugOverlay';
@@ -54,6 +58,7 @@ export interface PlayerSave {
   selected: number;
   time: number;
   spawn: [number, number, number];
+  kit?: KitSave;
 }
 
 const STARTER_KIT: Array<[number, number]> = [
@@ -87,6 +92,8 @@ export class Game {
   readonly mobs: MobManager;
   readonly telegraphs: Telegraphs;
   readonly shake = new ScreenShake();
+  readonly lightning: Lightning;
+  readonly hsin: HsinCombat;
   private punchCooldown = 0;
   private readonly prevPlayerPos = new THREE.Vector3();
   private readonly playerVel = new THREE.Vector3();
@@ -109,7 +116,9 @@ export class Game {
   private pausedAt = -1;
 
   // UI
-  readonly hud: HTMLDivElement;
+  readonly hudLayer: HTMLDivElement;
+  readonly hud: CombatHud;
+  private readonly screenFlash: HTMLDivElement;
   readonly toasts: Toasts;
   private readonly hotbar: Hotbar;
   private readonly vitals: Vitals;
@@ -157,6 +166,7 @@ export class Game {
     this.scene.add(this.model.root);
     this.animator = new HsinAnimator(this.model);
     this.shadow = new BlobShadow(this.scene, 0.45);
+    this.lightning = new Lightning(this.scene);
     this.projectiles = new Projectiles(this.scene, this.world, this.combat, this.particles);
     this.mobs = new MobManager(this.scene, this.world, this.combat, this.drops, this.particles);
     this.telegraphs = new Telegraphs(this.scene);
@@ -174,21 +184,26 @@ export class Game {
       c.y += target.hitHeight * 0.3;
       const style: NumberStyle = info.kind === 'liberation' ? 'big' : info.crit ? 'crit' : info.element === 'electro' ? 'electro' : 'normal';
       this.overlay.addNumber(c, dealt, style);
+      this.hsin.onDamageDealt(target, info);
+      this.hitSparks(c, info);
     };
+    this.mobs.onKilled = () => this.hsin.onKill();
 
     // ---- UI ----
-    this.hud = el('div', 'layer', container);
-    this.underwaterEl = el('div', 'underwater-tint hidden', this.hud);
-    this.vignette = el('div', 'damage-vignette', this.hud);
-    this.crosshair = el('div', 'crosshair', this.hud);
-    this.vitals = new Vitals(this.hud);
-    this.hotbar = new Hotbar(this.hud, this.inventory);
-    this.toasts = new Toasts(this.hud);
-    this.overlay = new WorldOverlay(this.hud);
-    this.bossBar = new BossBar(this.hud);
-    this.debug = new DebugOverlay(this.hud);
+    this.hudLayer = el('div', 'layer', container);
+    this.underwaterEl = el('div', 'underwater-tint hidden', this.hudLayer);
+    this.vignette = el('div', 'damage-vignette', this.hudLayer);
+    this.crosshair = el('div', 'crosshair', this.hudLayer);
+    this.vitals = new Vitals(this.hudLayer);
+    this.hotbar = new Hotbar(this.hudLayer, this.inventory);
+    this.toasts = new Toasts(this.hudLayer);
+    this.overlay = new WorldOverlay(this.hudLayer);
+    this.hud = new CombatHud(this.hudLayer);
+    this.screenFlash = el('div', 'screen-flash', this.hudLayer);
+    this.bossBar = new BossBar(this.hudLayer);
+    this.debug = new DebugOverlay(this.hudLayer);
     this.debug.setFpsVisible(settings.data.showFps);
-    this.clickHint = el('div', 'click-to-play hidden', this.hud, 'Click to capture the mouse');
+    this.clickHint = el('div', 'click-to-play hidden', this.hudLayer, 'Click to capture the mouse');
     this.inventoryScreen = new InventoryScreen(container, this.inventory);
     this.inventoryScreen.onClose = () => this.closeInventory(false);
     this.inventoryScreen.onDrop = (s) => this.dropStack(s.id, s.count);
@@ -207,6 +222,7 @@ export class Game {
     const respawn = el('button', 'btn primary', deathCard, 'Respawn');
     respawn.addEventListener('click', () => this.respawn());
 
+    this.hsin = new HsinCombat(this);
     settings.onChange((s) => this.applySettings(s));
     this.applySettings(settings.data);
 
@@ -247,6 +263,7 @@ export class Game {
     this.spawn.set(s.x, s.height + 1, s.z);
     this.player.setPosition(s.x, s.height + 1, s.z);
     this.needsSpawnPlacement = true;
+    this.hsin.ensureRectifier((id, n) => this.dropStack(id, n));
     for (const [id, n] of STARTER_KIT) this.inventory.add(id, n);
     this.inventory.selected = 0;
     this.sky.time = GAME.world.startTime;
@@ -262,6 +279,9 @@ export class Game {
     this.inventory.selected = s.selected ?? 0;
     this.sky.time = s.time;
     this.spawn.set(s.spawn[0], s.spawn[1], s.spawn[2]);
+    this.hsin.ensureRectifier((id, n) => this.dropStack(id, n));
+    this.hsin.kit.load(s.kit);
+    this.model.setForm(this.hsin.kit.form);
   }
 
   private playerSave(): PlayerSave {
@@ -277,6 +297,7 @@ export class Game {
       selected: this.inventory.selected,
       time: this.sky.time,
       spawn: [this.spawn.x, this.spawn.y, this.spawn.z],
+      kit: this.hsin.kit.serialize(),
     };
   }
 
@@ -304,15 +325,18 @@ export class Game {
     this.rafId = requestAnimationFrame(loop);
   }
 
-  /** Advances the game by one frame. Exposed so automated tests can step deterministically. */
-  frame(now: number): void {
+  /**
+   * Advances the game by one frame. Exposed so automated tests can step deterministically;
+   * they may skip rendering for speed.
+   */
+  frame(now: number, render = true): void {
     const t0 = performance.now();
     const dt = Math.min(0.05, Math.max(0, (now - this.last) / 1000));
     this.last = now;
     this.time += dt;
     this.input.now = this.time;
     this.update(dt);
-    this.renderer.render(this.scene, this.rig.camera);
+    if (render) this.renderer.render(this.scene, this.rig.camera);
     this.input.endFrame();
     if (this.debug.tick(dt, performance.now() - t0)) this.updateDebugText();
   }
@@ -373,7 +397,10 @@ export class Game {
       this.updateFacing(dt);
     }
 
-    this.rig.update(dt, p.position, GAME.player.eyeHeight, this.world);
+    // Hsin's kit (attacks, skills, forms) runs before the character is posed.
+    const canAct = playing && !p.dead;
+    this.hsin.update(dt, canAct, this.state !== 'paused' && this.state !== 'loading');
+    this.rig.update(dt, p.position, this.hsin.kit.fox ? 0.7 : GAME.player.eyeHeight, this.world, this.hsin.pivotHeight);
     const cam = this.rig.camera;
     this.updateCharacter(dt);
 
@@ -381,8 +408,9 @@ export class Game {
     this.punchCooldown -= dt;
     if (playing) {
       const eye = new THREE.Vector3(p.position.x, p.position.y + GAME.player.eyeHeight, p.position.z);
-      const punched = input.mouseClicked(0) && this.tryPunch(eye);
-      this.interaction.enabled = !punched;
+      const blockMode = this.hsin.blockMode;
+      const punched = blockMode && input.mouseClicked(0) && this.tryPunch(eye);
+      this.interaction.enabled = blockMode && !punched;
       this.interaction.update(dt, {
         world: this.world,
         inventory: this.inventory,
@@ -437,7 +465,11 @@ export class Game {
     cam.updateProjectionMatrix();
     this.shake.strength = this.settings.data.cameraShake;
     this.shake.update(dt, this.rig);
+    this.lightning.freeze = this.state === 'paused';
+    this.lightning.update(dt, cam);
     this.overlay.update(dt, cam, this.mobs.mobs, (m) => this.mobs.occluded(m as Mob, cam.position, this.time));
+    this.hud.update(this.hsin.kit, this.hsin.weaponSelected, playing || this.state === 'inventory');
+    this.crosshair.classList.toggle('combat', this.hsin.weaponSelected && !this.hsin.kit.fox);
     const elite = this.mobs.engagedElite(p.position);
     if (elite) this.bossBar.show(elite.def.name, elite.def.level, elite.health, elite.def.maxHealth, dt);
     else this.bossBar.hide();
@@ -462,19 +494,54 @@ export class Game {
   hitPlayer(info: DamageInfo): boolean {
     const p = this.player;
     if (p.dead || p.invulnerable) return false;
-    this.damagePlayer(info.amount, 'enemy');
-    if (info.knockback > 0) {
+    const mod = this.hsin.incoming(info);
+    this.damagePlayer(mod.amount, 'enemy');
+    if (mod.knockback > 0) {
       const dir = new THREE.Vector3(p.position.x - info.source.x, 0, p.position.z - info.source.z);
       if (dir.lengthSq() < 1e-4) dir.set(0, 0, 1);
-      dir.normalize().multiplyScalar(info.knockback);
+      dir.normalize().multiplyScalar(mod.knockback);
       p.impulse.add(dir);
-      if (p.onGround) p.body.vel.y = Math.max(p.body.vel.y, Math.min(7, info.knockback * 0.5));
+      if (p.onGround) p.body.vel.y = Math.max(p.body.vel.y, Math.min(7, mod.knockback * 0.5));
     }
     this.shake.add(Math.min(0.6, 0.15 + info.knockback * 0.03));
     const c = p.position.clone();
     c.y += 1.9;
-    this.overlay.addNumber(c, info.amount, 'player');
+    this.overlay.addNumber(c, mod.amount, 'player');
     return true;
+  }
+
+  /** Small burst of sparks where a hit lands. */
+  private hitSparks(c: THREE.Vector3, info: DamageInfo): void {
+    const color = info.element === 'electro' ? (info.crit ? 0xffe08a : 0xd0a0ff) : 0xffffff;
+    const n = info.crit ? 14 : 8;
+    for (let i = 0; i < n; i++) {
+      this.particles.spark({
+        x: c.x, y: c.y, z: c.z,
+        vx: (Math.random() - 0.5) * 7, vy: (Math.random() - 0.2) * 6, vz: (Math.random() - 0.5) * 7,
+        color, size: 0.12, life: 0.25 + Math.random() * 0.15, drag: 4, gravity: 6,
+      });
+    }
+  }
+
+  // ---- CombatHost hooks ----
+  destructive(): boolean {
+    return this.settings.data.destructiveAbilities;
+  }
+
+  toast(text: string): void {
+    this.toasts.show(text);
+  }
+
+  sound(_name: string, _pos?: THREE.Vector3): void {}
+
+  flashScreen(color: string, seconds: number, strength = 1): void {
+    const f = this.screenFlash;
+    f.style.transition = 'none';
+    f.style.background = color;
+    f.style.opacity = String(strength);
+    void f.offsetWidth;
+    f.style.transition = `opacity ${seconds}s ease-out`;
+    f.style.opacity = '0';
   }
 
   private updateEnemies(dt: number, simulate: boolean): void {
@@ -570,7 +637,7 @@ export class Game {
       // Face the dash direction unless dashing backward.
       const back = p.dodgeDir.x * Math.sin(p.yaw) + p.dodgeDir.z * Math.cos(p.yaw) > 0.7;
       if (!back) target = Math.atan2(-p.dodgeDir.x, -p.dodgeDir.z);
-    } else if (this.combatFacing > 0 || this.rig.mode === 'first') {
+    } else if (this.combatFacing > 0 || this.hsin.acting || this.rig.mode === 'first') {
       target = this.rig.yaw;
     } else if (p.moveDir.lengthSq() > 0.01 && p.speed > 0.3) {
       target = Math.atan2(-p.moveDir.x, -p.moveDir.z);
@@ -603,7 +670,7 @@ export class Game {
       dodge: p.dodgeProgress,
       dodgeX: p.dodgeDir.x * rx + p.dodgeDir.z * rz,
       dodgeZ: p.dodgeDir.x * fx + p.dodgeDir.z * fz,
-      action: this.currentAction(),
+      action: this.hsin.animAction() ?? this.currentAction(),
       lookPitch: this.rig.pitch,
       lookYaw: wrapAngle(this.rig.yaw - p.yaw),
       pose: null,
@@ -612,9 +679,12 @@ export class Game {
     m.update(dt);
     sampleLightColor(this.world, p.position.x, p.position.y + 1.2, p.position.z, this.lightTint);
     m.setLight(this.lightTint);
+    const fox = this.hsin.kit.fox;
     const visible = this.rig.mode === 'third' && this.rig.distance > 0.7;
-    m.setVisible(visible);
-    this.shadow.update(this.world, p.position.x, p.position.y, p.position.z, 1, visible ? 1 : 0);
+    m.setVisible(visible && !fox);
+    this.hsin.fox.setVisible(visible && fox);
+    if (fox) this.hsin.updateFox(dt, this.lightTint);
+    this.shadow.update(this.world, p.position.x, p.position.y, p.position.z, fox ? 0.8 : 1, visible ? 1 : 0);
   }
 
   /** Puts the player on open ground near the spawn column (not on top of a tree). */
@@ -675,6 +745,11 @@ export class Game {
     this.model.hitFlash();
     if (!this.action || this.action.kind === 'mine') this.playAction('hurt', 0.35);
     if (p.health <= 0) {
+      if (this.hsin.tryRevive()) {
+        p.health = p.maxHealth;
+        this.hsin.effects.handle(this.hsin.kit.drain());
+        return;
+      }
       p.health = 0;
       this.die();
     }
@@ -695,6 +770,7 @@ export class Game {
 
   private respawn(): void {
     const p = this.player;
+    this.hsin.resetOnRespawn();
     p.dead = false;
     p.health = p.maxHealth;
     p.setPosition(this.spawn.x, this.spawn.y, this.spawn.z);
@@ -809,6 +885,7 @@ export class Game {
         `Draw calls ${ri.render.calls}   Geometries ${ri.memory.geometries}`,
         `Particles ${this.particles.active}   Drops ${this.drops.count}   Mobs ${this.mobs.mobs.length} (hostile ${this.mobs.hostileCount})   Shots ${this.projectiles.count}`,
         t ? `Target ${blockDef(t.id).name} @ ${t.x}, ${t.y}, ${t.z}` : 'Target -',
+        `Form ${this.hsin.kit.form}${this.hsin.kit.fox ? ' (fox)' : ''}  Energy ${this.hsin.kit.energy.toFixed(0)}  AH ${this.hsin.kit.answeringHeart.toFixed(0)}  IH ${this.hsin.kit.illuminingHeart.toFixed(0)}`,
         `Seed ${this.meta.seed}`,
       ].join('\n'),
     );

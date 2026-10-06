@@ -30,7 +30,7 @@ const url = server.resolvedUrls.local[0];
 const browser = await chromium.launch({
   args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist', '--autoplay-policy=no-user-gesture-required'],
 });
-const page = await browser.newPage({ viewport: { width: 960, height: 540 } });
+const page = await browser.newPage({ viewport: { width: 880, height: 495 } });
 const errors = [];
 page.on('console', (m) => {
   if (m.type() === 'error') errors.push(m.text());
@@ -46,6 +46,11 @@ function check(name, ok, detail = '') {
 }
 
 async function shot(name) {
+  // Some steps run without rendering for speed, so draw the current state first.
+  await page.evaluate(() => {
+    const g = window.game;
+    if (g) g.renderer.render(g.scene, g.rig.camera);
+  });
   await page.screenshot({ path: `${out}/${name}.png`, timeout: 120000 });
 }
 
@@ -139,7 +144,7 @@ try {
   const placed = await page.evaluate(() => {
     const g = window.game;
     g.rig.pitch = -0.55;
-    g.inventory.selected = 0;
+    g.inventory.selected = 1; // slot 1 is always the Rectifier; slot 2 holds planks
     g.inventory.changed();
     return g.inventory.selectedStack?.id;
   });
@@ -350,13 +355,13 @@ try {
 
   if (phase !== '1' && phase !== '2') {
     // ---- Phase 3: enemies ----
-    const fr = (n) => page.evaluate((n) => { const g = window.game; for (let i = 0; i < n; i++) { g.__t += 33; g.frame(g.__t); } }, n);
+    const fr = (n) => page.evaluate((n) => { const g = window.game; for (let i = 0; i < n; i++) { g.__t += 33; g.frame(g.__t, i === n - 1); } }, n);
     // Night spawning on the surface / in caves.
     const night = await page.evaluate(() => {
       const g = window.game;
       g.mobs.clear();
       g.sky.time = 0.0;
-      g.frame((g.__t += 33));
+      g.frame((g.__t += 33), false);
       for (let i = 0; i < 60 && g.mobs.hostileCount < 3; i++) g.mobs.trySpawn(g.player.position, true, 0);
       return { hostile: g.mobs.hostileCount, kinds: g.mobs.mobs.map((m) => m.def.kind) };
     });
@@ -365,7 +370,7 @@ try {
       const g = window.game;
       g.mobs.clear();
       g.sky.time = 0.45;
-      g.frame((g.__t += 33));
+      g.frame((g.__t += 33), false);
       for (let i = 0; i < 80 && !g.mobs.mobs.some((m) => !m.def.hostile); i++) g.mobs.trySpawn(g.player.position, false, 1);
       // Daytime hostiles are only allowed where it is dark (caves).
       return g.mobs.mobs.map((m) => {
@@ -402,7 +407,7 @@ try {
       const p = g.player.position;
       g.__husk = g.mobs.spawn('husk', p.x, p.y, p.z - 6);
       const hp = g.player.health;
-      for (let i = 0; i < 150 && g.player.health === hp; i++) g.frame((g.__t += 33));
+      for (let i = 0; i < 150 && g.player.health === hp; i++) g.frame((g.__t += 33), false);
       return { before: hp, after: g.player.health, state: g.__husk.state };
     });
     check('melee enemy chases and hits Hsin', melee.after < melee.before, JSON.stringify(melee));
@@ -416,12 +421,12 @@ try {
       h.body.pos.set(p.x, p.y, p.z - 1.6);
       h.body.vel.set(0, 0, 0);
       g.rig.yaw = 0; g.rig.pitch = -0.1; g.player.yaw = 0;
-      g.frame((g.__t += 33));
+      g.frame((g.__t += 33), false);
       const hp = h.health;
       g.input.simulateMouse(0, true);
-      g.frame((g.__t += 33));
+      g.frame((g.__t += 33), false);
       g.input.simulateMouse(0, false);
-      g.frame((g.__t += 33));
+      g.frame((g.__t += 33), false);
       return { before: hp, after: h.health };
     });
     check('left click punches a mob under the crosshair', punch.after < punch.before, JSON.stringify(punch));
@@ -435,7 +440,7 @@ try {
       const dropsBefore = g.drops.count;
       g.combat.hit(h, { amount: 1e6, element: 'physical', kind: 'punch', source: p.clone(), knockback: 0 });
       g.combat.hit(boar, { amount: 1e6, element: 'physical', kind: 'punch', source: p.clone(), knockback: 0 });
-      for (let i = 0; i < 40; i++) g.frame((g.__t += 33));
+      for (let i = 0; i < 40; i++) g.frame((g.__t += 33), false);
       return { dead: !h.alive, removed: !g.mobs.mobs.includes(h) && !g.mobs.mobs.includes(boar), drops: g.drops.count - dropsBefore };
     });
     check('defeated enemies dissolve and drop loot', kill.dead && kill.removed && kill.drops > 0, JSON.stringify(kill));
@@ -447,7 +452,7 @@ try {
       const a = g.mobs.spawn('archer', p.x + 2, p.y, p.z - 10);
       let shots = 0;
       for (let i = 0; i < 150; i++) {
-        g.frame((g.__t += 33));
+        g.frame((g.__t += 33), false);
         shots = Math.max(shots, g.projectiles.count);
         if (shots > 0) break;
       }
@@ -466,7 +471,7 @@ try {
       const c = g.mobs.spawn('colossus', p.x, p.y, p.z - 5);
       let windup = false;
       for (let i = 0; i < 120 && !windup; i++) {
-        g.frame((g.__t += 33));
+        g.frame((g.__t += 33), false);
         windup = c.state === 'windup' && c.stateTime > 0.5;
       }
       const bar = !document.querySelector('.bossbar').classList.contains('hidden');
@@ -475,6 +480,167 @@ try {
     check('elite shows a boss bar and telegraphs attacks', elite.bar && elite.windup, JSON.stringify(elite));
     await shot('11-elite');
     await page.evaluate(() => window.game.mobs.clear());
+  }
+
+  if (phase !== '1' && phase !== '2' && phase !== '3') {
+    // ---- Phase 4: Hsin's combat kit ----
+    const k4 = await page.evaluate(() => {
+      const g = window.game;
+      const F = (n = 1) => { for (let i = 0; i < n; i++) g.frame((g.__t += 33), false); };
+      const click = () => { g.input.simulateMouse(0, true); F(); g.input.simulateMouse(0, false); F(); };
+      const key = (code) => { g.input.simulateKey(code, true); F(); g.input.simulateKey(code, false); };
+      const out = {};
+      g.mobs.clear();
+      g.mobs.spawning = false;
+      const p = g.player.position;
+      const bx = Math.floor(p.x), bz = Math.floor(p.z), by = 96;
+      for (let dz = -16; dz <= 16; dz++) for (let dx = -16; dx <= 16; dx++) g.world.setBlock(bx + dx, by, bz + dz, 21);
+      g.player.setPosition(bx + 0.5, by + 1, bz + 0.5);
+      g.player.health = g.player.maxHealth;
+      g.rig.yaw = 0; g.rig.pitch = -0.05; g.player.yaw = 0;
+      out.slot1 = g.inventory.slots[0]?.id === 256 && g.inventory.locked.has(0);
+      g.inventory.selected = 0;
+      g.inventory.changed();
+      F(20);
+      // Left click fires shots, doesn't mine.
+      g.rig.pitch = -0.6;
+      F(2);
+      const shotsBefore = g.projectiles.count;
+      click();
+      F(4);
+      out.firesInsteadOfMining = g.projectiles.count > shotsBefore || g.hsin.kit.action !== 'none';
+      g.rig.pitch = -0.05;
+      F(40); // let the combo window from that click expire
+      // A sturdy, immovable dummy to hit, put back in front of Hsin before each check.
+      const home = new p.constructor(bx + 0.5, by + 1, bz - 7.5);
+      const dummy = g.mobs.spawn('husk', home.x, home.y, home.z);
+      dummy.def = { ...dummy.def, speed: 0, detectRange: 0, knockbackResist: 1, maxHealth: 1e7 };
+      dummy.health = 1e7;
+      const reset = () => {
+        dummy.body.pos.copy(home);
+        dummy.body.vel.set(0, 0, 0);
+        g.player.setPosition(bx + 0.5, by + 1, bz + 0.5);
+        g.player.yaw = 0;
+        g.rig.yaw = 0;
+        g.rig.pitch = -0.05;
+      };
+      F(5);
+      const stages = [];
+      const handle = g.hsin.effects.handle.bind(g.hsin.effects);
+      g.hsin.effects.handle = (evs) => { for (const e of evs) if (e.type === 'basic') stages.push(e.stage); handle(evs); };
+      g.hsin.kit.energy = 0;
+      g.hsin.kit.answeringHeart = 0;
+      for (let c = 0; c < 4; c++) { click(); F(14); }
+      F(10);
+      out.combo = stages.join('');
+      out.heart = Math.round(g.hsin.kit.answeringHeart);
+      out.energy = Math.round(g.hsin.kit.energy);
+      out.dummyHit = dummy.health < 1e7;
+      // Heavy -> Realm Protector.
+      g.input.simulateMouse(0, true);
+      F(26);
+      out.charging = g.hsin.kit.action === 'charge';
+      const realmReady = g.hsin.kit.realmReady;
+      g.input.simulateMouse(0, false);
+      F(2);
+      out.realm = realmReady && Math.round(g.hsin.kit.realmCd) === 24;
+      F(30);
+      // Resonance Skill + Moon Fox.
+      key('KeyE');
+      out.skillCd = Math.round(g.hsin.kit.answeringSkillCd);
+      g.input.simulateKey('KeyW', true);
+      F(30);
+      g.input.simulateKey('KeyW', false);
+      out.fox = g.hsin.kit.fox && g.player.body.height < 1;
+      F(3);
+      click();
+      F(3);
+      out.unfox = !g.hsin.kit.fox && g.player.body.height > 1.7;
+      // Formshift.
+      reset();
+      g.hsin.kit.energy = 125;
+      key('KeyR');
+      F(130);
+      out.form = g.hsin.kit.form;
+      out.edict0 = g.hsin.kit.edictStacks;
+      out.ward0 = g.hsin.kit.wardStacks;
+      // Illumining basic attacks call Soaring Pillars.
+      for (let c = 0; c < 3; c++) { click(); F(14); }
+      F(15);
+      out.edictUsed = out.edict0 - g.hsin.kit.edictStacks;
+      // Radiance Ward.
+      g.player.invulnTimer = 0;
+      const hp0 = g.player.health;
+      g.hitPlayer({ amount: 1000, element: 'tacet', kind: 'mob', source: new p.constructor(p.x, p.y, p.z - 2), knockback: 8 });
+      out.wardDamage = Math.round(hp0 - g.player.health);
+      F(40);
+      // Mechanism.
+      reset();
+      F(2);
+      const before = dummy.health;
+      key('KeyE');
+      F(40);
+      out.mechanism = dummy.health < before && g.hsin.kit.illuminingSkillCd > 15;
+      // Pillars Aligned.
+      g.hsin.kit.illuminingHeart = 100;
+      F(20);
+      key('KeyE');
+      F(5);
+      out.dominion = g.hsin.kit.dominion;
+      // Pillars Across Heaven.
+      F(30);
+      reset();
+      F(2);
+      g.hsin.kit.formTime = 10;
+      const before2 = dummy.health;
+      key('KeyR');
+      F(170);
+      out.pillars = dummy.health < before2 && g.hsin.kit.form === 'answering';
+      // Revive passive.
+      g.player.invulnTimer = 0;
+      g.player.invulnSources.clear();
+      g.player.health = 200;
+      g.hitPlayer({ amount: 99999, element: 'tacet', kind: 'mob', source: p.clone(), knockback: 0 });
+      out.revive = !g.player.dead && g.player.health === g.player.maxHealth && g.player.invulnerable;
+      // Destructive abilities toggle.
+      g.mobs.clear();
+      const countBlocks = () => { let n = 0; for (let dz = -6; dz <= 6; dz++) for (let dx = -6; dx <= 6; dx++) if (g.world.getBlock(bx + dx, by, bz - 8 + dz) !== 0) n++; return n; };
+      g.settings.set('destructiveAbilities', false);
+      const n0 = countBlocks();
+      g.hsin.effects.breakSphere; // exists
+      g.hsin.kit.realmCd = 0;
+      g.rig.pitch = -0.35;
+      F(20);
+      g.input.simulateMouse(0, true); F(28); g.input.simulateMouse(0, false); F(40);
+      const n1 = countBlocks();
+      g.settings.set('destructiveAbilities', true);
+      g.hsin.kit.realmCd = 0;
+      F(10);
+      g.input.simulateMouse(0, true); F(28); g.input.simulateMouse(0, false); F(40);
+      const n2 = countBlocks();
+      g.settings.set('destructiveAbilities', false);
+      out.terrainSafe = n1 === n0;
+      out.terrainBreaks = n2 < n1;
+      out.blocks = [n0, n1, n2];
+      g.rig.pitch = -0.1;
+      return out;
+    });
+    check('Rectifier is locked in hotbar slot 1', k4.slot1);
+    check('left click with the Rectifier attacks instead of mining', k4.firesInsteadOfMining);
+    check('basic attack is a 4-stage combo building Answering Heart and energy', k4.combo === '0123' && k4.heart > 0 && k4.energy > 0 && k4.dummyHit, `stages ${k4.combo}, heart ${k4.heart}, energy ${k4.energy}`);
+    check('holding left click charges; the first heavy is Realm Protector (24s)', k4.charging && k4.realm);
+    check('E casts the Resonance Skill with a 12s cooldown', k4.skillCd === 12, `cd ${k4.skillCd}`);
+    check('moving right after E turns Hsin into the Moon Fox; attacking turns her back', k4.fox && k4.unfox);
+    check('R (full energy) Formshifts into Illumining Form with 21 Edict and 2 Ward', k4.form === 'illumining' && k4.edict0 === 21 && k4.ward0 === 2, `${k4.form} ${k4.edict0}/${k4.ward0}`);
+    check('Edict calls Soaring Pillars on hits (at most 1 per second)', k4.edictUsed >= 1 && k4.edictUsed <= 3, `used ${k4.edictUsed}`);
+    check('Illumining -20% and Radiance Ward -60% damage', k4.wardDamage === 320, `took ${k4.wardDamage} of 1000`);
+    check('E in Illumining summons the Xuanfang Mechanism (20s)', k4.mechanism);
+    check('full Illumining Heart makes E into Pillars Aligned (Mechanism Dominion)', k4.dominion);
+    check('R in Illumining: Pillars Across Heaven hits and returns to Answering Form', k4.pillars);
+    check('fatal hit triggers the revive passive', k4.revive);
+    check('abilities leave terrain alone unless the setting allows it', k4.terrainSafe && k4.terrainBreaks, JSON.stringify(k4.blocks));
+    await step(3);
+    await shot('12-kit');
   }
 
   check('no console errors', errors.length === 0, errors.slice(0, 5).join(' | '));

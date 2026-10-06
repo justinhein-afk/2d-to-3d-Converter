@@ -106,11 +106,41 @@ targeted with a ray from the crosshair, limited to her reach.
 * All mob stats (health, damage, speed, ranges, spawn caps, drops) are in
   [`src/config/mobs.ts`](src/config/mobs.ts).
 
+## Hsin's combat kit
+
+Hotbar **slot 1 is always her Rectifier** (it can't be moved or dropped). With it selected the
+mouse attacks; with any other slot selected the mouse breaks and places blocks like Minecraft.
+E and R work from any slot.
+
+| Input | Answering Form (default) | Illumining Form |
+|---|---|---|
+| Left click | 4-stage ranged Electro combo, builds **Answering Heart** | Stronger combo, builds **Illumining Heart** |
+| Hold left click | Charged Electro shot. Every 24 s it becomes **Realm Protector**, a huge explosive hit. A full Answering Heart is spent for bonus damage. | Charged lance |
+| E | **Moonfire Burst** (12 s): Electro burst around the target. Start moving right after it to turn into the **Moon Fox** (fast, high jumps); attack or press E to change back. | **Colossal Xuanfang Mechanism** (20 s): a giant construct rises and slams the target area. With a full Illumining Heart, E becomes **Pillars Aligned** → **Mechanism Dominion**: empowered basic attacks that call lightning pillars and drain the gauge until it's empty. |
+| R | **Formshift** (needs full energy): cutscene, then Illumining Form | **Pillars Across Heaven**: cutscene, a massive area Electro finisher, then back to Answering Form |
+
+Illumining Form also gives **21 Edict** stacks (a hit spends one to call a Soaring Pillar of lightning
+on the enemy, at most once per second), **2 Radiance Ward** stacks (when hit, spend one to cut damage
+by 60% for 1 s and resist knockback) and **20% damage reduction**.
+
+Passive **Heart Moon's Grace**: a fatal hit leaves Hsin standing at full health with 1 s of
+invulnerability, then goes on a 5-minute cooldown.
+
+Hits give Resonance Energy for the Liberation (the ring around the R icon) and fill the Forte
+gauges shown above the health bar. Shots get a little aim assist toward the enemy nearest the
+crosshair. Damage numbers turn gold on crits.
+
+By default abilities never break terrain. Turn on **Settings → Destructive abilities** to let
+Realm Protector, the Mechanism slam and Pillars Across Heaven blow holes in the world.
+
+**Every number** (damage, cooldowns, stacks, energy, radii, gauges, crit chance) lives in
+[`src/config/abilities.ts`](src/config/abilities.ts).
+
 ## Project layout
 
 ```
 src/
-  config/     game.ts (movement, world, camera tuning), mobs.ts (enemy stats),
+  config/     abilities.ts (ALL combat numbers), game.ts (movement, world, camera), mobs.ts (enemies),
               appearance.ts (Hsin's colours), keybinds.ts
   core/       Game loop, input, settings, math helpers
   world/      blocks, procedural textures, noise, terrain, lighting, mesher, workers,
@@ -120,9 +150,10 @@ src/
   camera/     first/third-person camera rig with block collision
   entities/   box-model toolkit (skins + entity shader), dropped items, mobs (models, AI, spawning)
   combat/     damage types, target registry and queries, projectiles
-  fx/         particles, blob shadows, screen shake, attack warning circles
+  abilities/  Hsin's kit state machine (HsinKit), its effects, the Xuanfang Mechanism, combat glue
+  fx/         particles, lightning bolts and pillars, blob shadows, screen shake, warning circles
   ui/         hotbar, vitals, inventory, title screen, pause menu, debug overlay, icons,
-              enemy health bars, damage numbers, boss bar
+              enemy health bars, damage numbers, boss bar, combat HUD and skill icons
 tests/        Vitest unit tests
 scripts/      headless smoke test
 ```
