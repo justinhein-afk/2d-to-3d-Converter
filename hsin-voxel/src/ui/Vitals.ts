@@ -1,6 +1,6 @@
 // Health bar (with a trailing "damage lag" bar) and a stamina ring beside the crosshair.
 import type { Player } from '../player/Player';
-import { el, formatNumber } from './dom';
+import { el, formatNumber, setAttr, setStyle } from './dom';
 
 export class Vitals {
   readonly root: HTMLDivElement;
@@ -51,8 +51,8 @@ export class Vitals {
     const frac = Math.max(0, p.health / p.maxHealth);
     if (frac < this.lag) this.lag = Math.max(frac, this.lag - dt * 0.6);
     else this.lag = frac;
-    this.hpFill.style.transform = `scaleX(${frac})`;
-    this.hpLag.style.transform = `scaleX(${this.lag})`;
+    setStyle(this.hpFill, 'transform', `scaleX(${frac.toFixed(3)})`);
+    setStyle(this.hpLag, 'transform', `scaleX(${this.lag.toFixed(3)})`);
     this.hpBar.classList.toggle('low', frac < 0.3);
     const hp = Math.ceil(p.health);
     if (hp !== this.lastHp) {
@@ -61,8 +61,8 @@ export class Vitals {
     }
     const s = p.stamina / p.maxStamina;
     const circ = 2 * Math.PI * 14;
-    this.ringArc.setAttribute('stroke-dashoffset', String(circ * (1 - s)));
-    this.ringArc.setAttribute('stroke', s < 0.25 ? '#ff8a6a' : '#f6e3a8');
-    this.ring.style.opacity = s >= 0.999 ? '0' : '1';
+    setAttr(this.ringArc, 'stroke-dashoffset', (circ * (1 - s)).toFixed(1));
+    setAttr(this.ringArc, 'stroke', s < 0.25 ? '#ff8a6a' : '#f6e3a8');
+    setStyle(this.ring, 'opacity', s >= 0.999 ? '0' : '1');
   }
 }

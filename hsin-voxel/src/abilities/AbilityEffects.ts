@@ -163,6 +163,7 @@ export class AbilityEffects {
         break;
       case 'notReady':
         this.toastOnce(e.what);
+        h.sound('notReady');
         break;
     }
   }

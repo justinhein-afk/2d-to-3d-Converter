@@ -26,6 +26,8 @@ import { CombatHud } from '../ui/CombatHud';
 import { HsinCombat } from '../abilities/HsinCombat';
 import type { KitSave } from '../abilities/HsinKit';
 import { Lightning } from '../fx/Lightning';
+import { HsinAura } from '../fx/HsinAura';
+import { Sfx } from '../audio/Sfx';
 import { CutscenePlayer } from '../cutscenes/CutscenePlayer';
 import { CUTSCENES, VIEWER_LIST } from '../cutscenes';
 import { dampAngle, wrapAngle } from './math';
@@ -97,6 +99,12 @@ export class Game {
   readonly lightning: Lightning;
   readonly hsin: HsinCombat;
   readonly cutscenes: CutscenePlayer;
+  readonly sfx = new Sfx();
+  private readonly aura: HsinAura;
+  private stepDistance = 0;
+  private wasInWater = false;
+  /** Seconds of near-frozen time after a big hit (impact feel). */
+  private hitStop = 0;
   /** Cutscene Viewer preview in progress (from the pause menu). */
   private previewing = false;
   private previewFox = 0;
@@ -174,6 +182,7 @@ export class Game {
     this.animator = new HsinAnimator(this.model);
     this.shadow = new BlobShadow(this.scene, 0.45);
     this.lightning = new Lightning(this.scene);
+    this.aura = new HsinAura(this.particles, this.lightning);
     this.projectiles = new Projectiles(this.scene, this.world, this.combat, this.particles);
     this.mobs = new MobManager(this.scene, this.world, this.combat, this.drops, this.particles);
     this.telegraphs = new Telegraphs(this.scene);
@@ -193,8 +202,17 @@ export class Game {
       this.overlay.addNumber(c, dealt, style);
       this.hsin.onDamageDealt(target, info);
       this.hitSparks(c, info);
+      this.sfx.play(info.crit ? 'crit' : 'hit', c, 0.05);
+      if (target.team === 'neutral') this.sfx.play('animal', c, 0.2);
+      else this.sfx.play('mobHurt', c, 0.12);
+      const big = info.kind === 'realm' || info.kind === 'mechanism' || info.kind === 'liberation';
+      if (big) this.hitStop = Math.max(this.hitStop, GAME.feel.hitStopBig);
+      else if (info.crit || info.kind === 'heavy') this.hitStop = Math.max(this.hitStop, GAME.feel.hitStopSmall);
     };
-    this.mobs.onKilled = () => this.hsin.onKill();
+    this.mobs.onKilled = (m) => {
+      this.hsin.onKill();
+      this.sfx.play('mobDie', m.position.clone(), 0.05);
+    };
 
     // ---- UI ----
     this.hudLayer = el('div', 'layer', container);
@@ -246,6 +264,16 @@ export class Game {
     document.addEventListener('visibilitychange', this.onVisibility);
 
     this.player.onFallDamage = (amount) => this.damagePlayer(amount, 'fall');
+    this.player.onJump = () => this.sfx.play('jump');
+    this.player.onLand = (fall) => {
+      if (fall > 1.2) {
+        this.sfx.play('land');
+        this.dust(Math.min(14, 4 + fall * 2));
+      }
+    };
+    window.addEventListener('pointerdown', this.unlockAudio);
+    window.addEventListener('keydown', this.unlockAudio);
+    this.inventoryScreen.onCraft = () => this.sfx.play('craft');
   }
 
   static async create(
@@ -340,14 +368,20 @@ export class Game {
    */
   frame(now: number, render = true): void {
     const t0 = performance.now();
-    const dt = Math.min(0.05, Math.max(0, (now - this.last) / 1000));
+    const realDt = Math.min(0.05, Math.max(0, (now - this.last) / 1000));
     this.last = now;
+    let dt = realDt;
+    if (this.hitStop > 0) {
+      // Hit-stop: the world nearly freezes for a few frames so big hits feel heavy.
+      this.hitStop -= realDt;
+      dt *= GAME.feel.hitStopTimeScale;
+    }
     this.time += dt;
     this.input.now = this.time;
     this.update(dt);
     if (render) this.renderer.render(this.scene, this.rig.camera);
     this.input.endFrame();
-    if (this.debug.tick(dt, performance.now() - t0)) this.updateDebugText();
+    if (this.debug.tick(realDt, performance.now() - t0)) this.updateDebugText();
   }
 
   private update(dt: number): void {
@@ -390,6 +424,7 @@ export class Game {
       if (input.actionPressed('toggleView')) this.rig.mode = this.rig.mode === 'first' ? 'third' : 'first';
       const slot = input.hotbarPressed();
       if (slot >= 0) {
+        if (slot !== this.inventory.selected) this.sfx.play('select');
         this.inventory.selected = slot;
         this.inventory.changed();
       }
@@ -440,9 +475,13 @@ export class Game {
         blockedByEntity: (x, y, z) => this.blockOverlapsPlayer(x, y, z),
         onBreak: (x, y, z, id, drop) => {
           this.particles.blockBreak(x, y, z, blockDef(id).color);
+          this.sfx.block('break', blockDef(id).sound, new THREE.Vector3(x + 0.5, y + 0.5, z + 0.5));
           if (drop) this.drops.spawn(drop[0], drop[1], x + 0.5, y + 0.3, z + 0.5);
         },
-        onPlace: () => this.playAction('place', 0.3),
+        onPlace: (x, y, z, id) => {
+          this.playAction('place', 0.3);
+          this.sfx.block('place', blockDef(id).sound, new THREE.Vector3(x + 0.5, y + 0.5, z + 0.5));
+        },
         onUseItem: (id) => this.useItem(id),
         onInteractBlock: (_x, _y, _z, id) => {
           if (id === B.CRAFTING_TABLE) {
@@ -451,8 +490,9 @@ export class Game {
           }
           return false;
         },
-        onMiningTick: () => {
+        onMiningTick: (x, y, z, id) => {
           if (!this.action || this.action.kind === 'mine') this.playAction('mine', 0.4);
+          this.sfx.block('hit', blockDef(id).sound, new THREE.Vector3(x + 0.5, y + 0.5, z + 0.5));
         },
       });
     } else {
@@ -464,6 +504,7 @@ export class Game {
     this.drops.freeze = !simulate || worldFrozen;
     this.drops.update(dt, p.position, (id, count) => {
       const left = this.inventory.add(id, count);
+      if (left < count) this.sfx.play('pickup', undefined, 0.06);
       return count - left;
     });
     this.updateEnemies(dt, simulate && !worldFrozen);
@@ -484,6 +525,8 @@ export class Game {
     this.shake.update(dt, this.rig);
     this.lightning.freeze = this.state === 'paused';
     this.lightning.update(dt, cam);
+    this.sfx.setListener(cam);
+    if (this.state !== 'paused') this.updateAmbience(dt);
     this.overlay.update(dt, cam, this.mobs.mobs, (m) => this.mobs.occluded(m as Mob, cam.position, this.time));
     this.hud.update(this.hsin.kit, this.hsin.weaponSelected, playing || this.state === 'inventory');
     this.crosshair.classList.toggle('combat', this.hsin.weaponSelected && !this.hsin.kit.fox);
@@ -549,7 +592,68 @@ export class Game {
     this.toasts.show(text);
   }
 
-  sound(_name: string, _pos?: THREE.Vector3): void {}
+  sound(name: string, pos?: THREE.Vector3): void {
+    this.sfx.play(name, pos);
+  }
+
+  private readonly unlockAudio = () => {
+    this.sfx.unlock();
+    this.sfx.setVolume(this.settings.data.masterVolume);
+  };
+
+  /** Footsteps, sprint dust, splashes and Hsin's Electro aura. */
+  private updateAmbience(dt: number): void {
+    const p = this.player;
+    const pos = p.position;
+    const fox = this.hsin.kit.fox;
+    if (p.onGround && p.speed > 1 && !p.dodging) {
+      this.stepDistance += p.speed * dt;
+      const stride = fox ? 1.3 : p.sprinting ? 2.1 : 1.7;
+      if (this.stepDistance >= stride) {
+        this.stepDistance = 0;
+        const below = this.world.getBlock(Math.floor(pos.x), Math.floor(pos.y - 0.2), Math.floor(pos.z));
+        if (below !== B.AIR) this.sfx.block('step', blockDef(below).sound, pos);
+        if (p.sprinting || fox) this.dust(3);
+      }
+    }
+    if (!this.wasInWater && p.inWater && p.body.vel.y < -2) {
+      this.sfx.play('splash', pos.clone());
+      for (let i = 0; i < 24; i++) {
+        this.particles.bit({
+          x: pos.x + (Math.random() - 0.5) * 0.8, y: pos.y + 0.6, z: pos.z + (Math.random() - 0.5) * 0.8,
+          vx: (Math.random() - 0.5) * 3, vy: 3 + Math.random() * 3, vz: (Math.random() - 0.5) * 3,
+          color: Math.random() < 0.5 ? 0xd8ecff : 0x6f9fff, size: 0.1, life: 0.6, gravity: 14,
+        });
+      }
+    }
+    this.wasInWater = p.inWater;
+    const k = this.hsin.kit;
+    this.aura.update(dt, {
+      rectifier: this.model.rectifierWorld(new THREE.Vector3()),
+      feet: pos,
+      illumining: k.form === 'illumining',
+      dominion: k.dominion,
+      fox,
+      dodging: p.dodging,
+      visible: this.model.root.visible || this.hsin.fox.root.visible,
+      charge: k.charge,
+    });
+  }
+
+  /** Little puffs of ground-coloured dust at her feet. */
+  private dust(n: number): void {
+    const pos = this.player.position;
+    const below = this.world.getBlock(Math.floor(pos.x), Math.floor(pos.y - 0.2), Math.floor(pos.z));
+    if (below === B.AIR || below === B.WATER) return;
+    const color = blockDef(below).color;
+    for (let i = 0; i < n; i++) {
+      this.particles.bit({
+        x: pos.x + (Math.random() - 0.5) * 0.6, y: pos.y + 0.05, z: pos.z + (Math.random() - 0.5) * 0.6,
+        vx: (Math.random() - 0.5) * 1.6, vy: 0.6 + Math.random() * 1.2, vz: (Math.random() - 0.5) * 1.6,
+        color, size: 0.07, life: 0.4, gravity: 6, drag: 2,
+      });
+    }
+  }
 
   flashScreen(color: string, seconds: number, strength = 1): void {
     const f = this.screenFlash;
@@ -575,7 +679,7 @@ export class Game {
       hitPlayer: (info) => this.hitPlayer(info),
       telegraph: (x, y, z, r, t) => this.telegraphs.draw(x, y, z, r, t),
       shake: (a) => this.shake.add(a),
-      sound: () => {},
+      sound: (name, pos) => this.sfx.play(name, pos, 0.08),
       daylight: this.sky.daylight,
     };
     this.mobs.freeze = !simulate;
@@ -641,6 +745,7 @@ export class Game {
       dir.set(Math.sin(p.yaw), 0, Math.cos(p.yaw));
     }
     if (p.tryDodge(dir)) {
+      this.sfx.play('dodge');
       this.action = null;
     }
   }
@@ -746,6 +851,7 @@ export class Game {
       this.player.heal(this.player.maxHealth * def.heal);
       this.inventory.consumeSelected();
       this.playAction('eat', 0.6);
+      this.sfx.play('eat');
       this.toasts.show(`Ate ${def.name}`);
       return true;
     }
@@ -760,6 +866,7 @@ export class Game {
     p.sinceDamage = 0;
     this.flashVignette();
     this.model.hitFlash();
+    this.sfx.play('playerHurt', undefined, 0.1);
     if (!this.action || this.action.kind === 'mine') this.playAction('hurt', 0.35);
     if (p.health <= 0) {
       if (this.hsin.tryRevive()) {
@@ -813,6 +920,7 @@ export class Game {
 
   private openInventory(table: boolean): void {
     if (this.state !== 'playing') return;
+    this.sfx.play('click');
     this.state = 'inventory';
     this.suppressUnlockPause = true;
     this.input.exitLock();
@@ -972,6 +1080,7 @@ export class Game {
   }
 
   private applySettings(s: Settings['data']): void {
+    this.sfx.setVolume(s.masterVolume);
     this.rig.setFov(s.fov);
     this.world.setRenderDistance(s.renderDistance);
     this.debug.setFpsVisible(s.showFps);
@@ -1009,7 +1118,7 @@ export class Game {
         `Particles ${this.particles.active}   Drops ${this.drops.count}   Mobs ${this.mobs.mobs.length} (hostile ${this.mobs.hostileCount})   Shots ${this.projectiles.count}`,
         t ? `Target ${blockDef(t.id).name} @ ${t.x}, ${t.y}, ${t.z}` : 'Target -',
         `Form ${this.hsin.kit.form}${this.hsin.kit.fox ? ' (fox)' : ''}  Energy ${this.hsin.kit.energy.toFixed(0)}  AH ${this.hsin.kit.answeringHeart.toFixed(0)}  IH ${this.hsin.kit.illuminingHeart.toFixed(0)}`,
-        `Seed ${this.meta.seed}`,
+        `Sound ${this.sfx.state}   Seed ${this.meta.seed}`,
       ].join('\n'),
     );
   }
@@ -1023,6 +1132,8 @@ export class Game {
     this.running = false;
     cancelAnimationFrame(this.rafId);
     window.removeEventListener('resize', this.onResize);
+    window.removeEventListener('pointerdown', this.unlockAudio);
+    window.removeEventListener('keydown', this.unlockAudio);
     document.removeEventListener('visibilitychange', this.onVisibility);
     this.input.exitLock();
     this.world.dispose();

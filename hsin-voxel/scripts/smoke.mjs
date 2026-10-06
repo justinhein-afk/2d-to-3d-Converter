@@ -740,6 +740,187 @@ try {
     await step(2);
   }
 
+  if (['1', '2', '3', '4', '5'].indexOf(phase) < 0) {
+    // ---- Phase 6: polish ----
+    // Browsers only allow sound after a user gesture: any key press unlocks it.
+    await page.keyboard.press('KeyK');
+    await page.waitForTimeout(300);
+    const audio = await page.evaluate(() => window.game.sfx.state);
+    check('Web Audio unlocks on the first key press', audio === 'running', audio);
+
+    const s6 = await page.evaluate(() => {
+      const g = window.game;
+      const F = (n = 1) => { for (let i = 0; i < n; i++) g.frame((g.__t += 33), false); };
+      const key = (code) => { g.input.simulateKey(code, true); F(); g.input.simulateKey(code, false); };
+      const click = () => { g.input.simulateMouse(0, true); F(); g.input.simulateMouse(0, false); F(); };
+      const out = {};
+      g.mobs.clear();
+      g.mobs.spawning = false;
+      g.settings.set('destructiveAbilities', false);
+      g.hsin.kit.exitToAnswering();
+      g.model.setForm('answering');
+      g.hsin.kit.drain();
+      // A fresh platform in open sky, away from the earlier test platforms.
+      const p = g.player.position;
+      const bx = Math.floor(p.x), bz = Math.floor(p.z) + 40, by = 100;
+      for (let dz = -12; dz <= 12; dz++) for (let dx = -12; dx <= 12; dx++) g.world.setBlock(bx + dx, by, bz + dz, 21);
+      const center = () => {
+        g.player.setPosition(bx + 0.5, by + 1, bz + 0.5);
+        g.player.body.vel.set(0, 0, 0);
+        g.rig.yaw = 0; g.rig.pitch = -0.05; g.player.yaw = 0;
+      };
+      center();
+      g.player.health = g.player.maxHealth;
+      g.inventory.selected = 0;
+      g.inventory.changed();
+      F(20);
+      // Record particle and lightning spawns.
+      const sparks = [];
+      const spark = g.particles.spark.bind(g.particles);
+      g.particles.spark = (o) => { sparks.push(o); return spark(o); };
+      let bolts = 0;
+      const bolt = g.lightning.bolt.bind(g.lightning);
+      g.lightning.bolt = (...a) => { bolts++; return bolt(...a); };
+      const near = (v, r) => sparks.filter((o) => Math.hypot(o.x - v.x, o.y - v.y, o.z - v.z) < r).length;
+
+      // Idle: Electro sparkles drift off the Rectifier.
+      sparks.length = 0;
+      F(30);
+      out.rectifierSparkles = near(g.model.rectifierWorld(new p.constructor()), 0.8);
+
+      // Movement sounds: footsteps, jump, landing, dodge, hotbar.
+      g.sfx.counts.clear();
+      g.input.simulateKey('KeyW', true); F(30); g.input.simulateKey('KeyW', false); F(5);
+      key('Space'); F(30);
+      g.player.setPosition(p.x, p.y + 3, p.z); F(30); // a short drop for the landing thud
+      key('ShiftLeft'); F(15);
+      key('Digit2'); F(2); key('Digit1'); F(2);
+      out.moveSounds = Object.fromEntries(g.sfx.counts);
+
+      // Combat: hits make sparks, sounds and (for heavies) hit-stop.
+      center();
+      F(5);
+      const home = new p.constructor(bx + 0.5, by + 1, bz - 6.5);
+      const dummy = g.mobs.spawn('husk', home.x, home.y, home.z);
+      dummy.def = { ...dummy.def, speed: 0, detectRange: 0, knockbackResist: 1, maxHealth: 1e7 };
+      dummy.health = 1e7;
+      F(5);
+      g.sfx.counts.clear();
+      sparks.length = 0;
+      for (let i = 0; i < 4; i++) { click(); F(8); }
+      const dc = new p.constructor(dummy.position.x, dummy.position.y + dummy.hitHeight * 0.5, dummy.position.z);
+      out.hitSparks = near(dc, 1.2);
+      out.combatSounds = Object.fromEntries(g.sfx.counts);
+      F(40);
+      // A Heavy Attack (Realm Protector when ready) triggers hit-stop and shake.
+      g.hsin.kit.realmCd = 0;
+      g.input.simulateMouse(0, true);
+      let hitStop = 0;
+      let shake = 0;
+      for (let i = 0; i < 40; i++) {
+        F();
+        hitStop = Math.max(hitStop, g.hitStop);
+        shake = Math.max(shake, g.shake.trauma);
+      }
+      g.input.simulateMouse(0, false);
+      for (let i = 0; i < 20; i++) {
+        F();
+        hitStop = Math.max(hitStop, g.hitStop);
+        shake = Math.max(shake, g.shake.trauma);
+      }
+      out.heavy = { hitStop, shake, realm: g.sfx.counts.get('realm') ?? 0, heavy: g.sfx.counts.get('heavy') ?? 0 };
+      // Time really slows during hit-stop.
+      g.hitStop = 0.09;
+      const t0 = g.time;
+      F(1);
+      out.slowedFrame = g.time - t0;
+      F(10);
+
+      // Illumining Form: rising motes and small Electro arcs around her.
+      g.hsin.kit.energy = 125;
+      key('KeyR');
+      for (let i = 0; i < 140 && (g.state === 'cutscene' || g.hsin.kit.form !== 'illumining'); i++) F();
+      sparks.length = 0;
+      bolts = 0;
+      F(60);
+      out.illumining = { form: g.hsin.kit.form, motes: near(p, 2), bolts, liberationSounds: ['charge', 'thunder', 'formshift'].map((n) => g.sfx.counts.get(n) ?? 0) };
+
+      // Performance: average game update time with a fight going on (no rendering).
+      for (let i = 0; i < 5; i++) g.mobs.spawn(i % 2 ? 'archer' : 'husk', bx + 0.5 + (i - 2) * 3, by + 1, bz - 9.5);
+      F(10);
+      const t1 = performance.now();
+      for (let i = 0; i < 90; i++) {
+        if (i % 6 === 0) { g.input.simulateMouse(0, true); } else if (i % 6 === 1) { g.input.simulateMouse(0, false); }
+        F();
+      }
+      out.updateMs = (performance.now() - t1) / 90;
+      g.input.simulateMouse(0, false);
+      g.particles.spark = spark;
+      g.lightning.bolt = bolt;
+      return out;
+    });
+    check('Electro sparkles drift off the Rectifier', s6.rectifierSparkles >= 3, `${s6.rectifierSparkles} sparks`);
+    const ms = s6.moveSounds;
+    check(
+      'footsteps, jumps, landings, dodges and hotbar clicks make sounds',
+      ms['block:step'] > 0 && ms.jump > 0 && ms.land > 0 && ms.dodge > 0 && ms.select > 0,
+      JSON.stringify(ms),
+    );
+    const cs = s6.combatSounds;
+    check('hits throw Electro sparks and play zap/hit sounds', s6.hitSparks >= 8 && cs.zap > 0 && cs.hit + (cs.crit ?? 0) > 0 && cs.mobHurt > 0, JSON.stringify({ sparks: s6.hitSparks, ...cs }));
+    check('big hits add screen shake and a short hit-stop', s6.heavy.realm > 0 && s6.heavy.shake > 0.2 && s6.heavy.hitStop > 0.05 && s6.slowedFrame < 0.01, JSON.stringify({ ...s6.heavy, slowedFrame: s6.slowedFrame }));
+    check('Illumining Form crackles with motes and lightning arcs', s6.illumining.form === 'illumining' && s6.illumining.motes > 10 && s6.illumining.bolts > 0, JSON.stringify(s6.illumining));
+    check('Formshift cutscene plays its sound cues', s6.illumining.liberationSounds.every((n) => n > 0), JSON.stringify(s6.illumining.liberationSounds));
+    check('game update stays inside a 60 fps frame budget during a fight', s6.updateMs < 16.7, `${s6.updateMs.toFixed(2)} ms per update`);
+    await page.evaluate(() => {
+      const g = window.game;
+      g.sky.time = 0.85;
+      g.rig.yaw = 2.6;
+      g.rig.pitch = -0.2;
+      g.rig.zoom = 4.2;
+      for (let i = 0; i < 12; i++) g.frame((g.__t += 33), false);
+    });
+    await shot('15-electro');
+
+    // Settings apply immediately and the keybind list is in the pause menu.
+    await page.evaluate(() => window.game.pause());
+    await step(1);
+    await page.evaluate(() => [...document.querySelectorAll('.tab')].find((t) => t.textContent === 'Settings').click());
+    await shot('16-settings');
+    const st = await page.evaluate(() => {
+      const g = window.game;
+      const F = (n = 1) => { for (let i = 0; i < n; i++) g.frame((g.__t += 33), false); };
+      const rows = [...document.querySelectorAll('.setting')];
+      const input = (label) => rows.find((r) => r.firstChild.textContent === label).querySelector('input');
+      const set = (label, v) => { const i = input(label); i.value = String(v); i.dispatchEvent(new Event('input')); };
+      const turn = () => { const y = g.rig.yaw; g.rig.applyMouse(100, 0, g.settings.data.mouseSensitivity, false); const d = Math.abs(g.rig.yaw - y); g.rig.yaw = y; return d; };
+      set('Field of view', 95);
+      set('Render distance', 3);
+      F(2);
+      const after = { fov: Math.round(g.rig.camera.fov), rd: g.world.renderDistance };
+      set('Mouse sensitivity', 2);
+      after.turnFast = turn();
+      set('Mouse sensitivity', 0.5);
+      after.turnSlow = turn();
+      set('Field of view', 75);
+      set('Render distance', 4);
+      set('Mouse sensitivity', 1);
+      F(2);
+      return { after, back: { fov: Math.round(g.rig.camera.fov), rd: g.world.renderDistance }, saved: JSON.parse(localStorage.getItem('hsin-voxel-settings')).fov };
+    });
+    check(
+      'settings change FOV, render distance and mouse sensitivity live',
+      st.after.fov === 95 && st.after.rd === 3 && st.after.turnFast > st.after.turnSlow * 3.5 && st.back.fov === 75 && st.back.rd === 4 && st.saved === 75,
+      JSON.stringify(st),
+    );
+    await page.evaluate(() => [...document.querySelectorAll('.tab')].find((t) => t.textContent === 'Controls').click());
+    await shot('17-controls');
+    const binds = await page.evaluate(() => [...document.querySelectorAll('.keybinds tr')].map((r) => r.firstChild.textContent));
+    check('pause menu lists the keybinds', binds.length >= 15 && binds.includes('E') && binds.includes('R') && binds.includes('Shift'), `${binds.length} rows`);
+    await page.evaluate(() => window.game.resume());
+    await step(2);
+  }
+
   check('no console errors', errors.length === 0, errors.slice(0, 5).join(' | '));
 } catch (err) {
   console.error(err);

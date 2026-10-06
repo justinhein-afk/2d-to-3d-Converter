@@ -34,11 +34,12 @@ Click the game to capture the mouse; press **Esc** to pause.
 |---|---|
 | W A S D | Move (Hsin turns to face where she runs) |
 | Double-tap W / Left Ctrl | Sprint |
-| Space | Jump / swim up |
+| Space | Jump / swim up / skip a cutscene |
 | Shift | Dodge: a quick dash with a short invulnerability window (costs stamina) |
 | Mouse | Orbit the over-the-shoulder camera |
 | Mouse wheel | Zoom the camera in and out |
-| Left click (hold) | Break the targeted block |
+| Left click | Slot 1 (Rectifier): attack, hold for a Heavy Attack. Other slots: hold to break the targeted block |
+| E / R | Resonance Skill / Resonance Liberation (see the combat kit below) |
 | Right click | Place the held block, eat food, open a Crafting Table |
 | Middle click | Pick the targeted block into your hand |
 | 1 – 9 | Select hotbar slot |
@@ -169,6 +170,30 @@ wherever she stands. Camera keys orbit around her when they ease, `cut: true` sn
 `flash`, `gather`, `sparks`, `shake`, `screenFlash`, `glow`. Register new scenes in
 `src/cutscenes/index.ts`.
 
+## Sound, effects and settings
+
+* **Sound** is synthesised live with the Web Audio API from oscillators and filtered noise (there
+  are no audio files): Electro zaps for each shot, cracks and rumbles for skills and Liberations,
+  per-material block sounds (stone, wood, grass, sand, gravel, glass, …) for mining, placing and
+  footsteps, plus jumps, landings, splashes, dodges, pickups, crafting, enemy hits and deaths, and
+  menu clicks. Sounds pan left and right and fade with distance from the camera. Browsers only
+  allow audio after you interact with the page, so sound starts with your first click or key press.
+* **Electro effects**: purple-white lightning bolts, pillars and shockwave rings; sparks on every hit
+  (gold on crits); sparkles drifting off the Rectifier; in Illumining Form, rising motes and small
+  arcs crackling around her (golden during Mechanism Dominion); energy streaming into the Rectifier
+  while a Heavy Attack charges; an afterimage streak when dodging; dust when sprinting or landing
+  and splashes when falling into water.
+* **Impact**: screen shake, plus a short **hit-stop** where the world nearly freezes for a split
+  second when Realm Protector, the Xuanfang Mechanism or a Liberation lands (shorter for crits and
+  Heavy Attacks). The timings are in `GAME.feel` in [`src/config/game.ts`](src/config/game.ts).
+* **Pause menu** (Esc or P) has four tabs: **Game** (resume, save, save and quit), **Settings**
+  (mouse sensitivity, invert Y, render distance, field of view, camera shake, volume, FPS counter,
+  auto-jump, destructive abilities), **Controls** (the full keybind list) and **Cutscenes** (the
+  viewer). Settings apply immediately and are remembered in the browser.
+* **Performance**: chunks are meshed in web workers with hidden faces culled, particles share one
+  pooled buffer, and the HUD only touches the page when a value changes. If the game stutters,
+  lower the render distance; F3 shows FPS, CPU time per frame and draw calls.
+
 ## Project layout
 
 ```
@@ -185,7 +210,9 @@ src/
   combat/     damage types, target registry and queries, projectiles
   abilities/  Hsin's kit state machine (HsinKit), its effects, the Xuanfang Mechanism, combat glue
   cutscenes/  cutscene player and the cutscene data (formshift, pillarsAcrossHeaven, moonFox)
-  fx/         particles, lightning bolts and pillars, blob shadows, screen shake, warning circles
+  fx/         particles, lightning bolts and pillars, Hsin's Electro aura, blob shadows,
+              screen shake, warning circles
+  audio/      Web Audio sound effects (all synthesised)
   ui/         hotbar, vitals, inventory, title screen, pause menu, debug overlay, icons,
               enemy health bars, damage numbers, boss bar, combat HUD and skill icons
 tests/        Vitest unit tests

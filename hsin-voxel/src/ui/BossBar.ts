@@ -1,5 +1,5 @@
 // Large health bar at the top of the screen for elite enemies.
-import { el, formatNumber } from './dom';
+import { el, formatNumber, setStyle, setText } from './dom';
 
 export class BossBar {
   private readonly root: HTMLDivElement;
@@ -21,13 +21,13 @@ export class BossBar {
 
   show(name: string, level: number, hp: number, max: number, dt: number): void {
     this.root.classList.remove('hidden');
-    this.name.textContent = `Lv.${level}  ${name}`;
-    this.num.textContent = `${formatNumber(Math.max(0, hp))} / ${formatNumber(max)}`;
+    setText(this.name, `Lv.${level}  ${name}`);
+    setText(this.num, `${formatNumber(Math.max(0, hp))} / ${formatNumber(max)}`);
     const f = Math.max(0, hp / max);
     if (f < this.lagFrac) this.lagFrac = Math.max(f, this.lagFrac - dt * 0.35);
     else this.lagFrac = f;
-    this.fill.style.transform = `scaleX(${f})`;
-    this.lag.style.transform = `scaleX(${this.lagFrac})`;
+    setStyle(this.fill, 'transform', `scaleX(${f.toFixed(3)})`);
+    setStyle(this.lag, 'transform', `scaleX(${this.lagFrac.toFixed(3)})`);
   }
 
   hide(): void {

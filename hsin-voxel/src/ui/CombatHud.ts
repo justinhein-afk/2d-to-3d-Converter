@@ -2,7 +2,7 @@
 // active form badge, status chips (Edict, Radiance Ward, Moon Fox, Dominion), combo dots and charge ring.
 import type { HsinKit } from '../abilities/HsinKit';
 import { ABILITIES as A } from '../config/abilities';
-import { el } from './dom';
+import { el, setAttr, setStyle, setText } from './dom';
 import { skillIcon } from './skillIcons';
 
 const SVG = 'http://www.w3.org/2000/svg';
@@ -34,14 +34,14 @@ function setIcon(s: SkillSlot, name: string): void {
 
 function setCooldown(s: SkillSlot, remaining: number, max: number): void {
   if (remaining > 0.05) {
-    const pct = Math.min(1, remaining / max) * 360;
-    s.cd.style.background = `conic-gradient(rgba(6,4,14,0.78) ${pct}deg, transparent ${pct}deg)`;
-    s.cd.style.display = '';
-    s.cdText.textContent = remaining >= 10 ? Math.ceil(remaining).toString() : remaining.toFixed(1);
+    const pct = Math.round(Math.min(1, remaining / max) * 360);
+    setStyle(s.cd, 'background', `conic-gradient(rgba(6,4,14,0.78) ${pct}deg, transparent ${pct}deg)`);
+    setStyle(s.cd, 'display', '');
+    setText(s.cdText, remaining >= 10 ? Math.ceil(remaining).toString() : remaining.toFixed(1));
     s.root.classList.remove('ready');
   } else {
-    s.cd.style.display = 'none';
-    s.cdText.textContent = '';
+    setStyle(s.cd, 'display', 'none');
+    setText(s.cdText, '');
     s.root.classList.add('ready');
   }
 }
@@ -127,12 +127,12 @@ export class CombatHud {
     // Heavy / Realm Protector.
     if (illum) {
       setIcon(this.heavy, 'realm');
-      this.heavy.name.textContent = 'Heavy Attack';
+      setText(this.heavy.name, 'Heavy Attack');
       setCooldown(this.heavy, 0, 1);
       this.heavy.root.classList.remove('special');
     } else {
       setIcon(this.heavy, 'realm');
-      this.heavy.name.textContent = kit.realmReady ? 'Realm Protector' : 'Heavy Attack';
+      setText(this.heavy.name, kit.realmReady ? 'Realm Protector' : 'Heavy Attack');
       setCooldown(this.heavy, kit.realmCd, A.answering.realmProtector.cooldown);
       this.heavy.root.classList.toggle('special', kit.realmReady);
     }
@@ -140,47 +140,47 @@ export class CombatHud {
     // Resonance Skill (form dependent).
     if (kit.fox) {
       setIcon(this.skill, 'fox');
-      this.skill.name.textContent = 'Moon Fox (E: change back)';
+      setText(this.skill.name, 'Moon Fox (E: change back)');
       setCooldown(this.skill, 0, 1);
       this.skill.root.classList.add('special');
     } else if (kit.pillarsAlignedReady) {
       setIcon(this.skill, 'pillars');
-      this.skill.name.textContent = A.illumining.pillarsAligned.name;
+      setText(this.skill.name, A.illumining.pillarsAligned.name);
       setCooldown(this.skill, 0, 1);
       this.skill.root.classList.add('special');
     } else {
       setIcon(this.skill, illum ? 'fist' : 'burst');
-      this.skill.name.textContent = illum ? 'Xuanfang Mechanism' : 'Moonfire Burst';
+      const foxWindow = kit.foxWindow > 0 && !illum;
+      setText(this.skill.name, foxWindow ? 'Move now: Moon Fox!' : illum ? 'Xuanfang Mechanism' : 'Moonfire Burst');
       setCooldown(this.skill, kit.skillCooldown, kit.skillCooldownMax);
-      this.skill.root.classList.toggle('special', kit.foxWindow > 0 && !illum);
-      if (kit.foxWindow > 0 && !illum) this.skill.name.textContent = 'Move now: Moon Fox!';
+      this.skill.root.classList.toggle('special', foxWindow);
     }
 
     // Liberation with energy ring.
     setIcon(this.lib, illum ? 'heaven' : 'formshift');
-    this.lib.name.textContent = illum ? A.illumining.liberation.name : A.answering.liberation.name;
+    setText(this.lib.name, illum ? A.illumining.liberation.name : A.answering.liberation.name);
     const e = kit.energy / kit.maxEnergy;
     const circ = 2 * Math.PI * 46;
-    this.ringArc.setAttribute('stroke-dashoffset', String(circ * (1 - (illum ? 1 : e))));
-    this.ringArc.setAttribute('stroke', illum ? '#ffd36a' : e >= 1 ? '#f4e6ff' : '#b46cff');
+    setAttr(this.ringArc, 'stroke-dashoffset', (circ * (1 - (illum ? 1 : e))).toFixed(1));
+    setAttr(this.ringArc, 'stroke', illum ? '#ffd36a' : e >= 1 ? '#f4e6ff' : '#b46cff');
     this.lib.root.classList.toggle('ready', kit.liberationReady);
-    this.lib.cd.style.display = kit.liberationReady ? 'none' : '';
-    this.lib.cd.style.background = 'rgba(6,4,14,0.55)';
-    this.lib.cdText.textContent = illum ? '' : `${Math.floor(kit.energy)}`;
+    setStyle(this.lib.cd, 'display', kit.liberationReady ? 'none' : '');
+    setStyle(this.lib.cd, 'background', 'rgba(6,4,14,0.55)');
+    setText(this.lib.cdText, illum ? '' : `${Math.floor(kit.energy)}`);
 
     // Passive cooldown.
     setCooldown(this.passive, kit.passiveCd, A.passive.cooldown);
 
     // Forte gauges.
-    this.answerFill.style.transform = `scaleX(${kit.answeringHeart / A.general.maxAnsweringHeart})`;
-    this.illumFill.style.transform = `scaleX(${Math.max(0, kit.illuminingHeart) / A.general.maxIlluminingHeart})`;
+    setStyle(this.answerFill, 'transform', `scaleX(${(kit.answeringHeart / A.general.maxAnsweringHeart).toFixed(3)})`);
+    setStyle(this.illumFill, 'transform', `scaleX(${(Math.max(0, kit.illuminingHeart) / A.general.maxIlluminingHeart).toFixed(3)})`);
     this.answerGauge.classList.toggle('active', !illum);
     this.illumGauge.classList.toggle('active', illum);
     this.answerGauge.classList.toggle('full', kit.answeringHeart >= A.general.maxAnsweringHeart);
     this.illumGauge.classList.toggle('full', kit.illuminingHeart >= A.general.maxIlluminingHeart || kit.dominion);
     this.illumGauge.classList.toggle('dominion', kit.dominion);
-    this.formBadge.textContent = kit.fox ? 'Moon Fox' : illum ? 'Illumining Form' : 'Answering Form';
-    this.formBadge.className = `form-badge ${kit.fox ? 'fox' : illum ? 'illum' : 'answer'}`;
+    setText(this.formBadge, kit.fox ? 'Moon Fox' : illum ? 'Illumining Form' : 'Answering Form');
+    setAttr(this.formBadge, 'class', `form-badge ${kit.fox ? 'fox' : illum ? 'illum' : 'answer'}`);
 
     // Status chips.
     const chips: string[] = [];
@@ -204,9 +204,9 @@ export class CombatHud {
     this.combo.classList.toggle('hidden', !weaponSelected || kit.fox);
     this.comboDots.forEach((d, i) => d.classList.toggle('on', inCombo && i <= kit.stage));
     const ch = kit.charge;
-    this.chargeSvg.style.opacity = kit.action === 'charge' ? '1' : '0';
-    this.chargeArc.setAttribute('stroke-dashoffset', String(2 * Math.PI * 26 * (1 - ch)));
-    this.chargeArc.setAttribute('stroke', ch >= 1 ? (kit.realmReady ? '#ffd36a' : '#ffffff') : '#e0c0ff');
+    setStyle(this.chargeSvg, 'opacity', kit.action === 'charge' ? '1' : '0');
+    setAttr(this.chargeArc, 'stroke-dashoffset', (2 * Math.PI * 26 * (1 - ch)).toFixed(1));
+    setAttr(this.chargeArc, 'stroke', ch >= 1 ? (kit.realmReady ? '#ffd36a' : '#ffffff') : '#e0c0ff');
     this.weaponHint.classList.toggle('hidden', weaponSelected || kit.fox);
   }
 }

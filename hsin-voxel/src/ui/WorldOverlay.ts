@@ -1,6 +1,6 @@
 // Screen-space UI anchored to world positions: enemy health bars and floating damage numbers.
 import * as THREE from 'three';
-import { el, formatNumber } from './dom';
+import { el, formatNumber, setStyle } from './dom';
 
 export type NumberStyle = 'normal' | 'crit' | 'electro' | 'heal' | 'player' | 'big';
 
@@ -104,8 +104,8 @@ export class WorldOverlay {
       const frac = Math.max(0, s.healthFrac);
       if (frac < bar.lagFrac) bar.lagFrac = Math.max(frac, bar.lagFrac - dt * 0.8);
       else bar.lagFrac = frac;
-      bar.fill.style.transform = `scaleX(${frac})`;
-      bar.lag.style.transform = `scaleX(${bar.lagFrac})`;
+      setStyle(bar.fill, 'transform', `scaleX(${frac.toFixed(3)})`);
+      setStyle(bar.lag, 'transform', `scaleX(${bar.lagFrac.toFixed(3)})`);
       const scale = Math.max(0.55, Math.min(1, 9 / dist));
       bar.root.style.transform = `translate(${((v.x + 1) / 2) * w}px, ${((1 - v.y) / 2) * h}px) translate(-50%, -100%) scale(${scale})`;
       bar.root.style.display = '';

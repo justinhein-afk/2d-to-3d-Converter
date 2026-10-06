@@ -69,4 +69,14 @@ export const GAME = {
     pickupRadius: 2.6,
     despawnSeconds: 300,
   },
+
+  /** Hit-stop: time nearly freezes for a moment when a big hit lands. */
+  feel: {
+    /** Seconds after Realm Protector, Xuanfang Mechanism and Liberation hits. */
+    hitStopBig: 0.09,
+    /** Seconds after crits and Heavy Attacks. */
+    hitStopSmall: 0.035,
+    /** Game speed during hit-stop (0 = frozen, 1 = off). */
+    hitStopTimeScale: 0.12,
+  },
 } as const;
