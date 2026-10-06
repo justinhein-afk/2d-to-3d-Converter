@@ -1,0 +1,108 @@
+/* Cutscene letterbox bars, skip hint and title card. */
+.letterbox {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 0;
+  background: #000;
+  z-index: 40;
+  pointer-events: none;
+  transition: height 0.35s ease-out;
+}
+.letterbox.top {
+  top: 0;
+}
+.letterbox.bottom {
+  bottom: 0;
+}
+.letterbox.on {
+  height: 11vh;
+}
+.skip-hint {
+  position: absolute;
+  right: 24px;
+  bottom: calc(11vh + 12px);
+  z-index: 41;
+  padding: 5px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.8);
+  background: rgba(0, 0, 0, 0.45);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 999px;
+  opacity: 0;
+  transition: opacity 0.3s;
+  pointer-events: none;
+}
+.skip-hint.on {
+  opacity: 1;
+}
+.cutscene-title {
+  position: absolute;
+  left: 50%;
+  bottom: calc(11vh + 28px);
+  transform: translateX(-50%);
+  z-index: 41;
+  font-size: 30px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  white-space: nowrap;
+  color: #fff6e0;
+  text-shadow: 0 0 18px rgba(180, 108, 255, 0.9), 0 2px 4px #000;
+  opacity: 0;
+  pointer-events: none;
+}
+.cutscene-title.on {
+  animation: title-card 2.4s ease-out forwards;
+}
+@keyframes title-card {
+  0% {
+    opacity: 0;
+    letter-spacing: 0.4em;
+  }
+  20% {
+    opacity: 1;
+    letter-spacing: 0.14em;
+  }
+  75% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+.in-cutscene .hotbar,
+.in-cutscene .vitals,
+.in-cutscene .combat-hud,
+.in-cutscene .crosshair,
+.in-cutscene .item-name,
+.in-cutscene .bossbar,
+.in-cutscene .world-overlay .hpbar {
+  opacity: 0;
+  transition: opacity 0.25s;
+}
+.viewer-list .viewer-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  margin: 8px 0;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+.viewer-item .info .title {
+  font-weight: 700;
+  color: var(--gold-soft);
+}
+.viewer-item .info .desc {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+.viewer-item .btn {
+  width: auto;
+  margin: 0;
+  flex: none;
+}

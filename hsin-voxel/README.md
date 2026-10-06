@@ -136,6 +136,39 @@ Realm Protector, the Mechanism slam and Pillars Across Heaven blow holes in the 
 **Every number** (damage, cooldowns, stacks, energy, radii, gauges, crit chance) lives in
 [`src/config/abilities.ts`](src/config/abilities.ts).
 
+## Cutscenes
+
+Both Resonance Liberations play short in-engine cutscenes:
+
+* **Formshift** (~3 s): the camera sweeps round to a low angle in front of Hsin, lightning gathers
+  into her Rectifier, a flash and shockwave shift her into the white-and-violet Illumining look
+  (with a halo), and the camera snaps back behind her.
+* **Pillars Across Heaven** (~4 s): she raises her hand, the camera pulls up and back, pillars of
+  lightning rain down across the area, a white flash hits, and only then is the damage applied.
+* **Moon Fox** flourish (under 1 s): a burst of Electro as she changes shape. It never takes the camera.
+
+While a Liberation cutscene plays the screen gets letterbox bars, enemies and projectiles freeze,
+Hsin is invulnerable, and **Space skips it** (its effects, like the form change or the finisher's
+damage, still happen). The pause menu has a **Cutscenes** tab (the Cutscene Viewer) to replay each
+one without affecting the game.
+
+Cutscenes are plain data. Each scene in [`src/cutscenes/data/`](src/cutscenes/data/) is a list of
+timed keys:
+
+```ts
+camera: [{ t: 0.75, pos: [1.4, 0.45, 3.1], look: [0, 1.25, 0], fov: 58, ease: 'inOutCubic' }, ...],
+poses:  [{ t: 0, dur: 1.4, pose: 'formshift_gather' }, ...],
+fx:     [{ t: 1.38, type: 'screenFlash', color: '#f0e0ff', duration: 0.45 }, ...],
+sounds: [{ t: 1.4, sound: 'formshift' }],
+events: [{ t: 1.4, event: 'shift' }],
+```
+
+Positions are in Hsin's local space (`[right, up, forward]` from her feet), so a scene plays the same
+wherever she stands. Camera keys orbit around her when they ease, `cut: true` snaps, and
+`pos: 'gameplay'` means the normal camera. Effect types: `bolt`, `pillar`, `pillarRain`, `ring`,
+`flash`, `gather`, `sparks`, `shake`, `screenFlash`, `glow`. Register new scenes in
+`src/cutscenes/index.ts`.
+
 ## Project layout
 
 ```
@@ -151,6 +184,7 @@ src/
   entities/   box-model toolkit (skins + entity shader), dropped items, mobs (models, AI, spawning)
   combat/     damage types, target registry and queries, projectiles
   abilities/  Hsin's kit state machine (HsinKit), its effects, the Xuanfang Mechanism, combat glue
+  cutscenes/  cutscene player and the cutscene data (formshift, pillarsAcrossHeaven, moonFox)
   fx/         particles, lightning bolts and pillars, blob shadows, screen shake, warning circles
   ui/         hotbar, vitals, inventory, title screen, pause menu, debug overlay, icons,
               enemy health bars, damage numbers, boss bar, combat HUD and skill icons

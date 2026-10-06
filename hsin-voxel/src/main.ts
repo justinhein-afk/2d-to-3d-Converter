@@ -1,5 +1,6 @@
 // Entry point: builds textures, shows the title screen and starts a Game.
 import './styles.css';
+import './ui/cinematic.css';
 import { Game } from './core/Game';
 import { Settings } from './core/Settings';
 import { buildItemIcons } from './ui/icons';

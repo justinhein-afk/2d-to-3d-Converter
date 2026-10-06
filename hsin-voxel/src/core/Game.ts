@@ -26,6 +26,8 @@ import { CombatHud } from '../ui/CombatHud';
 import { HsinCombat } from '../abilities/HsinCombat';
 import type { KitSave } from '../abilities/HsinKit';
 import { Lightning } from '../fx/Lightning';
+import { CutscenePlayer } from '../cutscenes/CutscenePlayer';
+import { CUTSCENES, VIEWER_LIST } from '../cutscenes';
 import { dampAngle, wrapAngle } from './math';
 import { sampleLightColor } from '../world/lightProbe';
 import { DebugOverlay } from '../ui/DebugOverlay';
@@ -45,7 +47,7 @@ import { World } from '../world/World';
 import { Input } from './Input';
 import type { Settings } from './Settings';
 
-export type GameState = 'loading' | 'playing' | 'paused' | 'inventory' | 'dead';
+export type GameState = 'loading' | 'playing' | 'paused' | 'inventory' | 'dead' | 'cutscene';
 
 export interface PlayerSave {
   version: 1;
@@ -94,6 +96,11 @@ export class Game {
   readonly shake = new ScreenShake();
   readonly lightning: Lightning;
   readonly hsin: HsinCombat;
+  readonly cutscenes: CutscenePlayer;
+  /** Cutscene Viewer preview in progress (from the pause menu). */
+  private previewing = false;
+  private previewFox = 0;
+  private previewRestore: (() => void) | null = null;
   private punchCooldown = 0;
   private readonly prevPlayerPos = new THREE.Vector3();
   private readonly playerVel = new THREE.Vector3();
@@ -200,6 +207,7 @@ export class Game {
     this.overlay = new WorldOverlay(this.hudLayer);
     this.hud = new CombatHud(this.hudLayer);
     this.screenFlash = el('div', 'screen-flash', this.hudLayer);
+    this.cutscenes = new CutscenePlayer(this, this.hudLayer);
     this.bossBar = new BossBar(this.hudLayer);
     this.debug = new DebugOverlay(this.hudLayer);
     this.debug.setFpsVisible(settings.data.showFps);
@@ -212,6 +220,7 @@ export class Game {
       save: () => this.save(),
       quit: () => void this.quitToTitle(),
     });
+    this.pauseMenu.addTab('Cutscenes', (c) => this.buildViewer(c));
     this.loadingEl = el('div', 'loading', container);
     el('div', 'spinner', this.loadingEl);
     el('div', '', this.loadingEl, 'Generating terrain…');
@@ -348,7 +357,7 @@ export class Game {
     // Global keys.
     if (input.actionPressed('debug')) this.debug.toggle();
     if (input.actionPressed('pause')) {
-      if (this.state === 'playing') this.pause();
+      if (this.state === 'playing' || this.state === 'cutscene') this.pause();
       else if (this.state === 'paused' && this.time - this.pausedAt > 0.3) this.resume();
       else if (this.state === 'inventory') this.closeInventory(true);
     }
@@ -356,6 +365,8 @@ export class Game {
       if (this.state === 'playing') this.openInventory(false);
       else if (this.state === 'inventory') this.closeInventory(true);
     }
+
+    if (this.state === 'cutscene' && input.keyPressed('Space')) this.cutscenes.skip();
 
     // World streaming continues in every state so the view fills in.
     this.world.update(p.position.x, p.position.z);
@@ -399,7 +410,12 @@ export class Game {
 
     // Hsin's kit (attacks, skills, forms) runs before the character is posed.
     const canAct = playing && !p.dead;
-    this.hsin.update(dt, canAct, this.state !== 'paused' && this.state !== 'loading');
+    this.hsin.update(dt, canAct && !this.previewing, this.state !== 'paused' && this.state !== 'loading' && !this.previewing);
+    if (this.state !== 'paused') this.cutscenes.update(dt);
+    if (this.previewFox > 0) {
+      this.previewFox -= dt;
+      if (this.previewFox <= 0) this.endPreview();
+    }
     this.rig.update(dt, p.position, this.hsin.kit.fox ? 0.7 : GAME.player.eyeHeight, this.world, this.hsin.pivotHeight);
     const cam = this.rig.camera;
     this.updateCharacter(dt);
@@ -444,12 +460,13 @@ export class Game {
     }
 
     const simulate = this.state !== 'paused' && this.state !== 'loading';
-    this.drops.freeze = !simulate;
+    const worldFrozen = this.cutscenes.freezing || this.previewing;
+    this.drops.freeze = !simulate || worldFrozen;
     this.drops.update(dt, p.position, (id, count) => {
       const left = this.inventory.add(id, count);
       return count - left;
     });
-    this.updateEnemies(dt, simulate);
+    this.updateEnemies(dt, simulate && !worldFrozen);
     this.particles.freeze = !simulate;
     this.particles.update(dt);
     this.particles.setViewport(this.renderer.domElement.height, cam.fov);
@@ -673,14 +690,14 @@ export class Game {
       action: this.hsin.animAction() ?? this.currentAction(),
       lookPitch: this.rig.pitch,
       lookYaw: wrapAngle(this.rig.yaw - p.yaw),
-      pose: null,
-      poseT: 0,
+      pose: this.cutscenes.pose()?.pose ?? null,
+      poseT: this.cutscenes.pose()?.t ?? 0,
     });
     m.update(dt);
     sampleLightColor(this.world, p.position.x, p.position.y + 1.2, p.position.z, this.lightTint);
     m.setLight(this.lightTint);
-    const fox = this.hsin.kit.fox;
-    const visible = this.rig.mode === 'third' && this.rig.distance > 0.7;
+    const fox = this.hsin.kit.fox || this.previewFox > 0;
+    const visible = this.rig.override !== null || (this.rig.mode === 'third' && this.rig.distance > 0.7);
     m.setVisible(visible && !fox);
     this.hsin.fox.setVisible(visible && fox);
     if (fox) this.hsin.updateFox(dt, this.lightTint);
@@ -826,7 +843,8 @@ export class Game {
   }
 
   pause(): void {
-    if (this.state !== 'playing') return;
+    if (this.state !== 'playing' && this.state !== 'cutscene') return;
+    if (this.previewing) return;
     this.state = 'paused';
     this.pausedAt = this.time;
     this.suppressUnlockPause = true;
@@ -838,8 +856,113 @@ export class Game {
   resume(): void {
     if (this.state !== 'paused') return;
     this.pauseMenu.hide();
-    this.state = 'playing';
+    this.state = this.cutscenes.playing ? 'cutscene' : 'playing';
     this.input.requestLock();
+  }
+
+  // ---- Cutscenes ----
+
+  /** CutsceneHost: the scene's local origin is Hsin's feet and facing. */
+  anchor(): { pos: THREE.Vector3; yaw: number } {
+    return { pos: this.player.position.clone(), yaw: this.player.yaw };
+  }
+
+  setGlow(v: number): void {
+    this.model.glowBoost = v;
+  }
+
+  /** CombatHost: plays a Liberation cutscene. */
+  playCutscene(name: 'formshift' | 'pillars', onEvent: (e: string) => void, onDone: () => void): boolean {
+    const def = CUTSCENES[name];
+    if (!def) return false;
+    this.beginCutscene();
+    this.cutscenes.play(def, {
+      onEvent,
+      onDone: () => {
+        this.endCutscene();
+        onDone();
+      },
+    });
+    return true;
+  }
+
+  /** CombatHost: short flourish without camera takeover. */
+  playFlourish(name: 'moonfox' | 'moonfox_out'): void {
+    const def = CUTSCENES[name];
+    if (def) this.cutscenes.play(def);
+  }
+
+  private beginCutscene(): void {
+    if (this.state === 'playing') this.state = 'cutscene';
+    this.hudLayer.classList.add('in-cutscene');
+    this.player.movementLocked = true;
+    this.player.invulnSources.add('cutscene');
+    this.interaction.hide();
+  }
+
+  private endCutscene(): void {
+    this.hudLayer.classList.remove('in-cutscene');
+    this.player.movementLocked = false;
+    this.player.invulnSources.delete('cutscene');
+    if (this.state === 'cutscene') this.state = 'playing';
+  }
+
+  private buildViewer(c: HTMLElement): void {
+    el('div', 'notice', c, "Replay Hsin's cutscenes. The world is frozen while they play, and nothing happens to it.");
+    const list = el('div', 'viewer-list', c);
+    for (const id of VIEWER_LIST) {
+      const def = CUTSCENES[id];
+      const row = el('div', 'viewer-item', list);
+      const info = el('div', 'info', row);
+      el('div', 'title', info, def.name);
+      el('div', 'desc', info, `${def.description} (${def.duration.toFixed(1)} s${def.takeCamera ? '' : ', no camera takeover'})`);
+      const btn = el('button', 'btn small primary', row, 'Play');
+      btn.addEventListener('click', () => this.previewCutscene(id));
+    }
+  }
+
+  /** Plays a cutscene from the viewer; returns to the pause menu afterwards. */
+  previewCutscene(id: string): void {
+    const def = CUTSCENES[id];
+    if (!def || this.previewing) return;
+    this.pauseMenu.hide();
+    this.previewing = true;
+    this.state = 'cutscene';
+    this.hudLayer.classList.add('in-cutscene');
+    this.player.movementLocked = true;
+    this.player.invulnSources.add('cutscene');
+    const form = this.hsin.kit.form;
+    this.previewRestore = () => this.model.setForm(form);
+    if (id === 'formshift') this.model.setForm('answering');
+    if (id === 'pillars') this.model.setForm('illumining');
+    if (def.takeCamera) {
+      this.cutscenes.play(def, {
+        preview: true,
+        onEvent: (e) => {
+          if (e === 'shift') this.model.setForm('illumining');
+          if (e === 'impact') this.model.setForm('answering');
+        },
+        onDone: () => this.endPreview(),
+      });
+    } else {
+      // Flourishes don't move the camera: show the fox for a moment where Hsin stands.
+      this.previewFox = 1.6;
+      this.cutscenes.play(def);
+    }
+  }
+
+  private endPreview(): void {
+    if (!this.previewing) return;
+    this.previewRestore?.();
+    this.previewRestore = null;
+    this.previewing = false;
+    this.previewFox = 0;
+    this.hudLayer.classList.remove('in-cutscene');
+    this.player.movementLocked = false;
+    this.player.invulnSources.delete('cutscene');
+    this.state = 'paused';
+    this.pausedAt = this.time;
+    this.pauseMenu.show(3);
   }
 
   private async quitToTitle(): Promise<void> {

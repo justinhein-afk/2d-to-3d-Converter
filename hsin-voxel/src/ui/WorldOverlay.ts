@@ -10,6 +10,8 @@ interface FloatingNumber {
   vy: number;
   life: number;
   max: number;
+  /** Screen-space lift so numbers landing together don't overlap. */
+  stackPx: number;
 }
 
 export interface BarSource {
@@ -47,10 +49,9 @@ export class WorldOverlay {
     // Stack numbers that land on the same spot in quick succession so they stay readable.
     let stacked = 0;
     for (const n of this.numbers) {
-      if (n.life < 0.35 && Math.hypot(n.pos.x - pos.x, n.pos.z - pos.z) < 1.2) stacked++;
+      if (n.life < 0.4 && Math.hypot(n.pos.x - pos.x, n.pos.z - pos.z) < 1.5) stacked++;
     }
-    p.y += stacked * 0.38;
-    this.numbers.push({ el: e, pos: p, vy: 1.6, life: 0, max: style === 'big' ? 1.4 : 1.0 });
+    this.numbers.push({ el: e, pos: p, vy: 1.6, life: 0, max: style === 'big' ? 1.4 : 1.0, stackPx: (stacked % 6) * 26 });
     if (this.numbers.length > 40) this.removeNumber(0);
   }
 
@@ -79,7 +80,7 @@ export class WorldOverlay {
       n.el.style.display = '';
       const t = n.life / n.max;
       const pop = t < 0.12 ? 0.6 + (t / 0.12) * 0.7 : 1.3 - Math.min(0.3, (t - 0.12) * 1.5);
-      n.el.style.transform = `translate(${((v.x + 1) / 2) * w}px, ${((1 - v.y) / 2) * h}px) translate(-50%, -50%) scale(${pop})`;
+      n.el.style.transform = `translate(${((v.x + 1) / 2) * w}px, ${((1 - v.y) / 2) * h - n.stackPx}px) translate(-50%, -50%) scale(${pop})`;
       n.el.style.opacity = String(t > 0.7 ? 1 - (t - 0.7) / 0.3 : 1);
     }
 

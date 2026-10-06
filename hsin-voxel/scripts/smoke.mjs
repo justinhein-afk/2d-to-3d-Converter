@@ -643,6 +643,103 @@ try {
     await shot('12-kit');
   }
 
+  if (['1', '2', '3', '4'].indexOf(phase) < 0) {
+    // ---- Phase 5: cutscenes ----
+    const c5 = await page.evaluate(() => {
+      const g = window.game;
+      const F = (n = 1) => { for (let i = 0; i < n; i++) g.frame((g.__t += 33), false); };
+      const key = (code) => { g.input.simulateKey(code, true); F(); g.input.simulateKey(code, false); };
+      const out = {};
+      g.mobs.clear();
+      g.hsin.kit.exitToAnswering();
+      g.model.setForm('answering');
+      g.hsin.kit.drain();
+      // Fresh platform (the Phase 4 terrain test blew holes in the old one).
+      const p = g.player.position;
+      const bx = Math.floor(p.x) + 40, bz = Math.floor(p.z), by = 92;
+      for (let dz = -12; dz <= 12; dz++) for (let dx = -12; dx <= 12; dx++) g.world.setBlock(bx + dx, by, bz + dz, 21);
+      g.player.setPosition(bx + 0.5, by + 1, bz + 0.5);
+      F(5);
+      const mob = g.mobs.spawn('husk', p.x + 3, p.y, p.z - 4);
+      F(10);
+      // Formshift.
+      g.hsin.kit.energy = 125;
+      key('KeyR');
+      F(5);
+      out.fsState = g.state;
+      out.letterbox = document.querySelector('.letterbox.top').classList.contains('on');
+      out.cameraTaken = g.rig.override !== null;
+      const mobPos = mob.position.clone();
+      g.player.invulnTimer = 0;
+      out.invulnerable = g.hitPlayer({ amount: 500, element: 'tacet', kind: 'mob', source: p.clone(), knockback: 0 }) === false;
+      F(40);
+      out.frozen = mob.position.distanceTo(mobPos) < 0.01;
+      F(60);
+      out.fsEnd = { state: g.state, form: g.hsin.kit.form, camera: g.rig.override === null, letterbox: document.querySelector('.letterbox.top').classList.contains('on') };
+      // Pillars Across Heaven, skipped with Space.
+      F(20);
+      g.hsin.kit.formTime = 10;
+      const hp = mob.health;
+      key('KeyR');
+      F(10);
+      const wasPlaying = g.cutscenes.playing;
+      key('Space');
+      F(2);
+      out.skip = { wasPlaying, playing: g.cutscenes.playing, form: g.hsin.kit.form, damaged: mob.health < hp || !mob.alive, state: g.state };
+      // Moon Fox flourish: no camera takeover.
+      F(20);
+      g.mobs.clear();
+      g.hsin.kit.answeringSkillCd = 0;
+      key('KeyE');
+      g.input.simulateKey('KeyW', true);
+      let sawFlourishCamera = false;
+      let foxAt = -1;
+      for (let i = 0; i < 40; i++) {
+        F();
+        if (g.rig.override !== null) sawFlourishCamera = true;
+        if (g.hsin.kit.fox && foxAt < 0) foxAt = i;
+      }
+      g.input.simulateKey('KeyW', false);
+      out.fox = { fox: g.hsin.kit.fox, cameraTaken: sawFlourishCamera, state: g.state, duration: 0.7 };
+      g.input.simulateMouse(0, true); F(); g.input.simulateMouse(0, false); F(5);
+      return out;
+    });
+    check('Formshift plays a letterboxed cutscene that takes the camera', c5.fsState === 'cutscene' && c5.letterbox && c5.cameraTaken, JSON.stringify(c5));
+    check('enemies freeze and Hsin is invulnerable during cutscenes', c5.frozen && c5.invulnerable);
+    check('Formshift ends in Illumining Form with the camera back behind her', c5.fsEnd.state === 'playing' && c5.fsEnd.form === 'illumining' && c5.fsEnd.camera && !c5.fsEnd.letterbox, JSON.stringify(c5.fsEnd));
+    check('Space skips Pillars Across Heaven but still applies its damage and form change', c5.skip.wasPlaying && !c5.skip.playing && c5.skip.form === 'answering' && c5.skip.damaged, JSON.stringify(c5.skip));
+    check('Moon Fox flourish plays without taking the camera', c5.fox.fox && !c5.fox.cameraTaken && c5.fox.state === 'playing', JSON.stringify(c5.fox));
+
+    // Cutscene Viewer in the pause menu.
+    await page.evaluate(() => window.game.pause());
+    await step(1);
+    const tabs = await page.evaluate(() => [...document.querySelectorAll('.tab')].map((t) => t.textContent));
+    check('pause menu has a Cutscenes tab', tabs.includes('Cutscenes'), tabs.join(','));
+    await page.evaluate(() => [...document.querySelectorAll('.tab')].find((t) => t.textContent === 'Cutscenes').click());
+    await shot('13-viewer');
+    const formBefore = await page.evaluate(() => window.game.hsin.kit.form);
+    await page.evaluate(() => document.querySelector('.viewer-item .btn').click());
+    const v = await page.evaluate(() => {
+      const g = window.game;
+      const playing = g.cutscenes.playing && g.state === 'cutscene';
+      for (let i = 0; i < 45; i++) g.frame((g.__t += 33), false);
+      return { playing };
+    });
+    await shot('14-viewer-playing');
+    const v2 = await page.evaluate(() => {
+      const g = window.game;
+      for (let i = 0; i < 80; i++) g.frame((g.__t += 33), false);
+      return { state: g.state, menu: !document.querySelectorAll('.screen')[1]?.classList.contains('hidden'), form: g.hsin.kit.form, look: g.model.form };
+    });
+    check(
+      'Cutscene Viewer replays a scene and returns to the pause menu without changing the game',
+      v.playing && v2.state === 'paused' && v2.form === formBefore && v2.look === formBefore,
+      JSON.stringify({ ...v, ...v2, formBefore }),
+    );
+    await page.evaluate(() => window.game.resume());
+    await step(2);
+  }
+
   check('no console errors', errors.length === 0, errors.slice(0, 5).join(' | '));
 } catch (err) {
   console.error(err);

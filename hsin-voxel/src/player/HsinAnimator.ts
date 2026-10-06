@@ -392,10 +392,10 @@ export class HsinAnimator {
     const breathe = Math.sin(t * 1.6);
     switch (name) {
       case 'formshift_gather':
-        T.armRPitch = -1.3;
-        T.armLPitch = -1.3;
-        T.armRYaw = 0.9;
-        T.armLYaw = -0.9;
+        T.armRPitch = -0.8;
+        T.armLPitch = -0.8;
+        T.armRYaw = 0.75;
+        T.armLYaw = -0.75;
         T.headPitch = 0.35;
         T.hipsPitch = 0.12;
         T.rootY = 2 * u;
@@ -407,9 +407,9 @@ export class HsinAnimator {
         T.tailYaw = 0.2 * Math.sin(t * 4);
         T.earsBack = 0.5;
         T.recX = 0;
-        T.recY = 20;
-        T.recZ = 9;
-        T.recScale = 1 + 0.5 * u;
+        T.recY = 40 + 2 * u;
+        T.recZ = 0.5;
+        T.recScale = 1 + 0.6 * u;
         break;
       case 'formshift_release':
         T.armRPitch = -1.9;
